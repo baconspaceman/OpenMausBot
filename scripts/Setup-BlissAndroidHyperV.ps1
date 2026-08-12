@@ -21,7 +21,8 @@ New-Item -ItemType Directory -Force -Path $VmPath, (Join-Path $VmPath "Shared") 
 
 $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
 if ($vm) {
-  Write-Host "VM already exists; leaving its disk and settings untouched: $VmName"
+  Set-VM -Name $VmName -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
+  Write-Host "VM already exists; enforced OMB lifecycle settings: no automatic start, shut down with host."
   Write-Host "Use VMConnect.exe localhost $VmName to open it."
   exit 0
 }
@@ -55,6 +56,7 @@ Write-Host "  Memory:  dynamic 4-6 GB, startup 4 GB"
 Write-Host "  CPU:     2 virtual processors"
 Write-Host "  Network: $SwitchName (external, internet-capable)"
 Write-Host "  Shared:  $(Join-Path $VmPath 'Shared')"
+Write-Host "  Lifecycle: starts only when OMB provisions it; shuts down with the host."
 
 Start-VM -Name $VmName | Out-Null
 Start-Process -FilePath "$env:SystemRoot\System32\vmconnect.exe" -ArgumentList @("localhost", $VmName)

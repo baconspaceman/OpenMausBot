@@ -245,14 +245,31 @@ app.on("window-all-closed", () => {
 // EMBEDDING.md lifecycle rule: defer the first quit until the embedded
 // daemon's async cleanup completes — it can't run after the host exits.
 let cuaCleanedUp = false;
+async function requestServerComputerShutdown() {
+  if (!serverProc || !serverReady) return;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    await fetch(`http://127.0.0.1:${SERVER_PORT}/api/lifecycle/shutdown`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+  } catch {
+    // The server signal handler remains the fallback if this races teardown.
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 app.on("before-quit", (e) => {
   if (cuaCleanedUp) return;
   e.preventDefault();
-  try {
-    serverProc?.kill();
-  } catch {}
-  stopCua().finally(() => {
-    cuaCleanedUp = true;
-    app.quit();
+  void requestServerComputerShutdown().finally(() => {
+    try {
+      serverProc?.kill();
+    } catch {}
+    stopCua().finally(() => {
+      cuaCleanedUp = true;
+      app.quit();
+    });
   });
 });

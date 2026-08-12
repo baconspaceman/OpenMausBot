@@ -1,8 +1,14 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import { promisify } from "node:util";
+import { DATA_DIR } from "./config.js";
 const execFileAsync = promisify(execFile);
 const qemuProcesses = new Map();
+const QEMU_PID_DIR = join(DATA_DIR, "qemu-pids");
+/** Local machines are OMB-owned for the lifetime of the harness process. */
+let managedShutdown = null;
 export function isShellBackend(value) {
     return value === "wsl" || value === "hyperv" || value === "qemu" || value === "oracle";
 }
@@ -33,6 +39,141 @@ async function command(name, args, timeout = 10_000) {
             killed: e.killed,
         };
     }
+}
+async function stopHypervVm(vmName) {
+    const script = `
+    $vm = Get-VM -Name ${psLiteral(vmName)} -ErrorAction Stop
+    if ($vm.State -ne 'Off') { Stop-VM -Name ${psLiteral(vmName)} -Force -ErrorAction Stop }
+  `;
+    return command("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], 30_000);
+}
+async function stopWslDistro(distro) {
+    return command("wsl.exe", ["--terminate", distro], 30_000);
+}
+function stopQemuProcess(imagePath) {
+    const child = qemuProcesses.get(imagePath);
+    if (!child)
+        return false;
+    if (child.exitCode === null && !child.killed)
+        child.kill();
+    qemuProcesses.delete(imagePath);
+    removeQemuMarker(imagePath);
+    return true;
+}
+function qemuMarkerPath(imagePath) {
+    const id = createHash("sha256").update(imagePath).digest("hex");
+    return join(QEMU_PID_DIR, `${id}.json`);
+}
+function removeQemuMarker(imagePath) {
+    try {
+        unlinkSync(qemuMarkerPath(imagePath));
+    }
+    catch {
+        /* already removed */
+    }
+}
+function recordedQemuPaths() {
+    try {
+        return readdirSync(QEMU_PID_DIR)
+            .filter((name) => name.endsWith(".json"))
+            .flatMap((name) => {
+            try {
+                const record = JSON.parse(readFileSync(join(QEMU_PID_DIR, name), "utf8"));
+                return record.imagePath?.trim() ? [record.imagePath.trim()] : [];
+            }
+            catch {
+                return [];
+            }
+        });
+    }
+    catch {
+        return [];
+    }
+}
+async function stopRecordedQemu(imagePath) {
+    const marker = qemuMarkerPath(imagePath);
+    let record;
+    try {
+        record = JSON.parse(readFileSync(marker, "utf8"));
+    }
+    catch {
+        return false;
+    }
+    const pid = Number(record.pid);
+    if (!Number.isInteger(pid) || pid <= 0) {
+        removeQemuMarker(imagePath);
+        return false;
+    }
+    if (process.platform === "win32") {
+        const script = `
+      $p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}' -ErrorAction SilentlyContinue
+      if ($p -and $p.CommandLine -and $p.CommandLine.Contains(${psLiteral(imagePath)})) {
+        & taskkill.exe /PID ${pid} /T /F | Out-Null
+        exit $LASTEXITCODE
+      }
+      exit 4
+    `;
+        const result = await command("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], 30_000);
+        removeQemuMarker(imagePath);
+        return result.ok;
+    }
+    try {
+        process.kill(pid, "SIGTERM");
+        removeQemuMarker(imagePath);
+        return true;
+    }
+    catch {
+        removeQemuMarker(imagePath);
+        return false;
+    }
+}
+/** Stop every local machine OMB can own. Best effort: one unavailable backend
+ * must not prevent the others from being released during app shutdown. */
+export async function stopManagedBackends(cfg) {
+    if (managedShutdown)
+        return managedShutdown;
+    managedShutdown = (async () => {
+        const settings = cfg.computer ?? {};
+        const jobs = [];
+        const distro = settings.wsl?.distro?.trim();
+        if (distro) {
+            jobs.push(stopWslDistro(distro).then((result) => ({
+                backend: "wsl",
+                ok: result.ok || /not found|not running|does not exist/i.test(result.stderr),
+                detail: result.ok ? `WSL distribution '${distro}' terminated` : result.stderr || `could not terminate '${distro}'`,
+            })));
+        }
+        const vmName = settings.hyperv?.vmName?.trim();
+        if (vmName) {
+            jobs.push(stopHypervVm(vmName).then((result) => ({
+                backend: "hyperv",
+                ok: result.ok,
+                detail: result.ok ? `Hyper-V VM '${vmName}' is off` : result.stderr || `could not stop '${vmName}'`,
+            })));
+        }
+        const qemuPaths = new Set([
+            ...(settings.qemu?.imagePath?.trim() ? [settings.qemu.imagePath.trim()] : []),
+            ...qemuProcesses.keys(),
+            ...recordedQemuPaths(),
+        ]);
+        if (qemuPaths.size) {
+            jobs.push((async () => {
+                let stopped = false;
+                for (const imagePath of qemuPaths) {
+                    stopped = stopQemuProcess(imagePath) || (await stopRecordedQemu(imagePath)) || stopped;
+                }
+                return {
+                    backend: "qemu",
+                    ok: true,
+                    detail: stopped ? "OMB-owned QEMU process(es) stopped" : "QEMU was not running under this OMB process",
+                };
+            })());
+        }
+        return Promise.all(jobs);
+    })().finally(() => {
+        managedShutdown = null;
+    });
+    return managedShutdown;
 }
 function sshConfig(config) {
     const candidate = config;
@@ -178,11 +319,17 @@ export async function provisionBackend(cfg, backend) {
         const qemuPath = config.qemuPath || "qemu-system-x86_64.exe";
         const sshPort = config.ssh.port ?? 2222;
         const args = ["-display", "none", "-m", String(config.memoryMb ?? 4096), "-drive", `file=${config.imagePath},if=virtio`, "-nic", `user,model=virtio,hostfwd=tcp::${sshPort}-:22`];
-        const child = spawn(qemuPath, args, { detached: true, stdio: "ignore", windowsHide: true });
+        // OMB owns this process and releases it during lifecycle shutdown.
+        const child = spawn(qemuPath, args, { stdio: "ignore", windowsHide: true });
         if (!child.pid)
             throw new Error("QEMU did not start");
         qemuProcesses.set(config.imagePath, child);
-        child.once("exit", () => qemuProcesses.delete(config.imagePath));
+        mkdirSync(QEMU_PID_DIR, { recursive: true });
+        writeFileSync(qemuMarkerPath(config.imagePath), JSON.stringify({ pid: child.pid, imagePath: config.imagePath }));
+        child.once("exit", () => {
+            qemuProcesses.delete(config.imagePath);
+            removeQemuMarker(config.imagePath);
+        });
         child.unref();
         return { ...status, ready: true, state: "running", detail: `QEMU started with PID ${child.pid}` };
     }

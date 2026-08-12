@@ -200,8 +200,11 @@ Optional, pasted once in **App Settings** (gear in the sidebar footer):
 
 Backend settings are stored in `~/.openmausbot/config.json`. SSH private keys are never copied into the file;
 only the path to the key is stored. WSL2 uses the installed `wsl.exe` command. Hyper-V and QEMU are opt-in
-and only start a configured VM/image when you select the backend and start it. Oracle SSH runs a bounded
-connection probe only when you explicitly provision that backend.
+and only start a configured VM/image when you select the backend and start it. OMB reclaims its configured
+WSL distribution, Hyper-V VM, QEMU process, and Box computers when the app/server closes, and clears stale
+local machines at the next startup. Hyper-V VMs are configured with automatic start disabled. Oracle SSH runs
+a bounded connection probe only when you explicitly provision that backend; OMB does not power-cycle a remote
+Oracle host it does not own.
 
 The current shell contract is intentionally small and portable: the agent receives `computer_exec`, while
 desktop actions (`screenshot`, `click`, `type_text`, `press_key`, `scroll`, and `open_url`) remain Box-only

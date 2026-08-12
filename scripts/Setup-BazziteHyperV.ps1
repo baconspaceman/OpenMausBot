@@ -21,7 +21,8 @@ New-Item -ItemType Directory -Force -Path $VmPath, (Join-Path $VmPath "Shared") 
 
 $vm = Get-VM -Name $VmName -ErrorAction SilentlyContinue
 if ($vm) {
-  Write-Host "VM already exists; leaving its disk and settings untouched: $VmName"
+  Set-VM -Name $VmName -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
+  Write-Host "VM already exists; enforced OMB lifecycle settings: no automatic start, shut down with host."
   Write-Host "Use VMConnect.exe localhost $VmName to open it."
   exit 0
 }
@@ -45,7 +46,7 @@ if (Test-Path -LiteralPath $vhdPath) {
 New-VM -Name $VmName -Generation 2 -MemoryStartupBytes 6GB -NewVHDPath $vhdPath -NewVHDSizeBytes $VhdSizeBytes -Path $VmPath -SwitchName $SwitchName | Out-Null
 Set-VMProcessor -VMName $VmName -Count 4
 Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $true -MinimumBytes 4GB -StartupBytes 6GB -MaximumBytes 8GB
-Set-VM -Name $VmName -AutomaticStartAction StartIfRunning -AutomaticStopAction ShutDown
+Set-VM -Name $VmName -AutomaticStartAction Nothing -AutomaticStopAction ShutDown
 Set-VMFirmware -VMName $VmName -EnableSecureBoot On -SecureBootTemplate "MicrosoftUEFICertificateAuthority"
 Add-VMDvdDrive -VMName $VmName -Path $IsoPath | Out-Null
 
@@ -54,6 +55,7 @@ Write-Host "  Disk:    $vhdPath (dynamic, max $([math]::Round($VhdSizeBytes / 1G
 Write-Host "  Memory:  dynamic 4-8 GB, startup 6 GB"
 Write-Host "  CPU:     4 virtual processors"
 Write-Host "  Network: $SwitchName (external, internet-capable)"
+Write-Host "  Lifecycle: starts only when OMB provisions it; shuts down with the host."
 Write-Host "  Shared:  $(Join-Path $VmPath 'Shared')"
 
 Start-VM -Name $VmName | Out-Null

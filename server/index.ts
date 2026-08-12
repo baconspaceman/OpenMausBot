@@ -17,6 +17,7 @@ import {
   provisionBackend,
   runBackendCommand,
   sleepBackend,
+  stopManagedBackends,
 } from "./computer-backends.ts";
 import { ensureDirs, instanceConfigs, loadAgentContext, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import { fileBusStatus, listFileBus, transferFile, type FileBusBackend, type FileLocation } from "./file-bus.ts";
@@ -42,6 +43,15 @@ const MIME: Record<string, string> = {
 
 ensureDirs();
 const cfg = loadConfig();
+// Clear machines left behind by a previous forced close before accepting work.
+const staleLocalBackends = await stopManagedBackends(cfg).catch((error) => [{
+  backend: "unknown",
+  ok: false,
+  detail: error instanceof Error ? error.message : String(error),
+}]);
+for (const result of staleLocalBackends) {
+  console.log(`[lifecycle] startup cleanup ${result.backend}: ${result.detail}`);
+}
 const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
 await registry.load(instanceConfigs(cfg));
 
@@ -59,6 +69,26 @@ let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
 const store = new Store(() => bootSelection);
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
+
+let shutdownManagedComputersPromise: Promise<unknown> | null = null;
+function shutdownManagedComputers() {
+  if (shutdownManagedComputersPromise) return shutdownManagedComputersPromise;
+  shutdownManagedComputersPromise = (async () => {
+    const local = await stopManagedBackends(cfg);
+    const cloud = cfg.box?.token
+      ? await Promise.allSettled(store.bots.map(async (bot) => {
+          await Promise.race([
+            box.sleepBox(cfg, bot.id),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Box sleep timeout")), 5_000)),
+          ]);
+        }))
+      : [];
+    for (const result of local) console.log(`[lifecycle] shutdown ${result.backend}: ${result.detail}`);
+    if (cloud.length) console.log(`[lifecycle] requested sleep for ${cloud.length} Box computer(s)`);
+    return { local, cloud };
+  })();
+  return shutdownManagedComputersPromise;
+}
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
 const sseClients = new Set<ServerResponse>();
@@ -549,6 +579,9 @@ const server = createServer(async (req, res) => {
     if (method === "GET" && path === "/api/config") {
       return json(res, 200, configStatus());
     }
+    if (method === "POST" && path === "/api/lifecycle/shutdown") {
+      return json(res, 200, { ok: true, ...(await shutdownManagedComputers()) as object });
+    }
     if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
       const body = await readBody(req);
       const patch: Record<string, object> = {};
@@ -674,6 +707,8 @@ server.listen(PORT, "127.0.0.1", () => {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    void registry.disposeAll().finally(() => process.exit(0));
+    void shutdownManagedComputers()
+      .catch((error) => console.error(`[lifecycle] shutdown failed: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => registry.disposeAll().finally(() => process.exit(0)));
   });
 }
