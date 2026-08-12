@@ -3,8 +3,8 @@
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-export const DATA_DIR = join(homedir(), ".openmausbot");
+import { join, resolve } from "node:path";
+export const DATA_DIR = resolve(process.env.OPENMAUSBOT_DATA_DIR?.trim() || join(homedir(), ".openmausbot"));
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -68,7 +68,7 @@ export function saveConfig(patch) {
     catch {
         /* first write */
     }
-    for (const key of ["xai", "composio", "box", "computer"]) {
+    for (const key of ["xai", "composio", "box", "computer", "fileBus"]) {
         if (patch[key] && typeof patch[key] === "object") {
             disk[key] = { ...disk[key], ...patch[key] };
         }

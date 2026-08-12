@@ -19,6 +19,8 @@ const token = process.env.OGB_BOX_TOKEN ?? "";
 const shellBackend = isShellBackend(process.env.OGB_COMPUTER_BACKEND)
   ? (process.env.OGB_COMPUTER_BACKEND as ShellBackend)
   : null;
+const fileBusUrl = (process.env.OGB_FILE_BUS_URL ?? "").replace(/\/$/, "");
+const fileBusBotId = process.env.OGB_FILE_BUS_BOT_ID ?? "";
 let shellConfig: Record<string, unknown> = {};
 try {
   shellConfig = JSON.parse(process.env.OGB_COMPUTER_CONFIG ?? "{}");
@@ -156,7 +158,65 @@ const TOOLS = [
   },
 ];
 
+const FILE_TOOLS = [
+  {
+    name: "file_transfer",
+    description:
+      "Move one file between OpenMausBot backends. Use host paths relative to the File Bus root; use absolute Linux paths for WSL2, Hyper-V, QEMU, or Oracle SSH. The transfer is staged locally and credentials are never returned.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        source_backend: { type: "string", enum: ["host", "current", "wsl", "hyperv", "qemu", "oracle", "box"] },
+        source_path: { type: "string" },
+        destination_backend: { type: "string", enum: ["host", "current", "wsl", "hyperv", "qemu", "oracle", "box"] },
+        destination_path: { type: "string" },
+      },
+      required: ["source_backend", "source_path", "destination_backend", "destination_path"],
+    },
+  },
+  {
+    name: "file_list",
+    description: "List files currently staged in the OpenMausBot host File Bus root.",
+    inputSchema: { type: "object", properties: {} },
+  },
+];
+
+async function fileBusRequest(path: string, init?: RequestInit) {
+  if (!fileBusUrl) throw new Error("OpenMausBot File Bus is not attached to this turn");
+  const res = await fetch(`${fileBusUrl}${path}`, {
+    ...init,
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    signal: AbortSignal.timeout(300_000),
+  });
+  const body: any = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error || `File Bus request failed (${res.status})`);
+  return body;
+}
+
 async function call(id: unknown, name: string, args: any) {
+  if (name === "file_transfer") {
+    try {
+      const body = await fileBusRequest("/api/file-bus/transfer", {
+        method: "POST",
+        body: JSON.stringify({
+          botId: fileBusBotId,
+          source: { backend: String(args.source_backend ?? ""), path: String(args.source_path ?? "") },
+          destination: { backend: String(args.destination_backend ?? ""), path: String(args.destination_path ?? "") },
+        }),
+      });
+      return text(id, `File transferred successfully. ${JSON.stringify(body)}`);
+    } catch (error) {
+      return text(id, `File transfer failed: ${(error as Error).message}`, true);
+    }
+  }
+  if (name === "file_list") {
+    try {
+      const body = await fileBusRequest("/api/file-bus");
+      return text(id, JSON.stringify(body, null, 2));
+    } catch (error) {
+      return text(id, `File Bus listing failed: ${(error as Error).message}`, true);
+    }
+  }
   if (shellBackend) {
     if (name !== "computer_exec") {
       return text(id, `${shellBackend} is a shell backend; ${name} needs a desktop-capable computer such as Box`, true);
@@ -264,7 +324,8 @@ async function handle(msg: any) {
     });
   }
   if (msg.method === "tools/list") {
-    const tools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
+    const computerTools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
+    const tools = fileBusUrl ? [...computerTools, ...FILE_TOOLS] : computerTools;
     return send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
   }
   if (msg.method === "tools/call") {

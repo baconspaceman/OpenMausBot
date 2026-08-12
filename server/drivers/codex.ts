@@ -72,13 +72,20 @@ const DENY_TIMEOUT_NOTE =
 
 function computerMcpConfig(turn: SendTurnInput) {
   const computer = turn.integrations?.computer;
-  if (!computer) return {};
-  const env = "boxId" in computer
-    ? { ...NODE_ENV_FLAG, OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
-    : { ...NODE_ENV_FLAG, OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) };
+  const fileBus = turn.integrations?.fileBus;
+  if (!computer && !fileBus) return {};
+  const env = {
+    ...NODE_ENV_FLAG,
+    ...(computer
+      ? "boxId" in computer
+        ? { OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
+        : { OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) }
+      : {}),
+    ...(fileBus ? { OGB_FILE_BUS_URL: fileBus.url, OGB_FILE_BUS_BOT_ID: fileBus.botId } : {}),
+  };
   return {
     mcp_servers: {
-      computer: { command: process.execPath, args: [COMPUTER_PROXY_PATH], env },
+      [computer ? "computer" : "file_bus"]: { command: process.execPath, args: [COMPUTER_PROXY_PATH], env },
     },
   };
 }

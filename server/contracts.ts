@@ -110,6 +110,8 @@ export interface SendTurnInput {
      * MUST be spawned by Electron main; the harness only points the agent
      * CLI at the already-running socket via this MCP proxy command). */
     localComputer?: { command: string; args: string[]; env: Record<string, string> };
+    /** Provider-neutral file movement tools, available to every bot. */
+    fileBus?: { url: string; botId: string };
   };
   cwd?: string;
 }

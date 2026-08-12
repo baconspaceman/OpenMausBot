@@ -9,6 +9,7 @@ import * as box from "./box.js";
 import * as composio from "./composio.js";
 import { backendConfig, backendConfigStatus, backendLabel, backendStatus, isShellBackend, provisionBackend, runBackendCommand, sleepBackend, } from "./computer-backends.js";
 import { ensureDirs, instanceConfigs, loadAgentContext, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
+import { fileBusStatus, listFileBus, transferFile } from "./file-bus.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
@@ -258,6 +259,7 @@ async function startTurn(botId, text) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+            integrations.fileBus = { url: `http://127.0.0.1:${PORT}`, botId: bot.id };
             const wants = bot.computer; // cloud/local/wsl/hyperv/qemu/oracle/off/undefined(auto)
             if (isShellBackend(wants)) {
                 broadcast({ kind: "computer", botId: bot.id, state: `starting-${wants}` });
@@ -309,6 +311,7 @@ async function startTurn(botId, text) {
                             : integrations.localComputer
                                 ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
                                 : "",
+                    "The OpenMausBot File Bus is available to every bot. Use file_transfer to move files between host, current backend, WSL2, Hyper-V, QEMU, Oracle SSH, and future adapters. Host paths are relative to the configured File Bus root; do not place credentials or tokens in transfer paths or command output.",
                 ]
                     .filter(Boolean)
                     .join("\n\n"),
@@ -336,8 +339,31 @@ function configStatus() {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        fileBus: fileBusStatus(cfg),
         computer: backendConfigStatus(cfg),
     };
+}
+const FILE_BUS_BACKENDS = new Set(["host", "current", "wsl", "hyperv", "qemu", "oracle", "box"]);
+function fileLocation(value, botId) {
+    if (!value || typeof value !== "object")
+        throw new Error("file location must be an object");
+    const input = value;
+    let backend = String(input.backend ?? "").trim().toLowerCase();
+    if (backend === "current") {
+        const bot = botId ? store.bot(botId) : undefined;
+        if (!bot)
+            throw new Error("current backend transfers need a valid botId");
+        const selected = bot.computer;
+        if (selected === "off")
+            throw new Error("the bot's computer is turned off");
+        backend = selected === "cloud" ? "box" : selected === "local" || !selected ? "host" : selected;
+    }
+    if (!FILE_BUS_BACKENDS.has(backend))
+        throw new Error(`unsupported File Bus backend '${backend || ""}'`);
+    const path = String(input.path ?? "").trim();
+    if (!path)
+        throw new Error("file location path required");
+    return { backend: backend, path };
 }
 /** Rebuild the provider fleet after a config change so new keys take
  * effect without a server restart (kills any in-flight turns). */
@@ -511,7 +537,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box", "computer"]) {
+            for (const key of ["xai", "composio", "box", "computer", "fileBus"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
@@ -523,6 +549,19 @@ const server = createServer(async (req, res) => {
             const status = configStatus();
             broadcast({ kind: "config", ...status });
             return json(res, 200, status);
+        }
+        // ── provider-neutral File Bus ──
+        if (method === "GET" && path === "/api/file-bus") {
+            return json(res, 200, await listFileBus(cfg));
+        }
+        if (method === "POST" && path === "/api/file-bus/transfer") {
+            const body = await readBody(req);
+            const botId = typeof body.botId === "string" ? body.botId : undefined;
+            if (botId && !store.bot(botId))
+                return json(res, 404, { error: "no such bot" });
+            const source = fileLocation(body.source, botId);
+            const destination = fileLocation(body.destination, botId);
+            return json(res, 200, await transferFile(cfg, source, destination));
         }
         // ── connectors (Composio) ──
         if (method === "GET" && path === "/api/connectors/catalog") {

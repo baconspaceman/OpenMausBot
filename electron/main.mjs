@@ -1,11 +1,33 @@
 import { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences, utilityProcess } from "electron";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startCua, stopCua, registerCuaIpc } from "./cua.mjs";
 import { startSpeech, stopSpeech } from "./speech.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// A relocation marker next to the packaged executable lets the app move to a
+// different volume without changing unrelated user data. The server and
+// Electron userData both follow the same E:\\OpenMausBot root.
+function storageRoot() {
+  const explicit = process.env.OPENMAUSBOT_STORAGE_ROOT?.trim();
+  if (explicit) return path.resolve(explicit);
+  if (!app.isPackaged) return "";
+  try {
+    const marker = path.join(path.dirname(process.execPath), "openmausbot-storage.json");
+    const parsed = JSON.parse(readFileSync(marker, "utf8"));
+    return typeof parsed.root === "string" && parsed.root.trim() ? path.resolve(parsed.root) : "";
+  } catch {
+    return "";
+  }
+}
+const STORAGE_ROOT = storageRoot();
+if (STORAGE_ROOT) {
+  app.setPath("userData", path.join(STORAGE_ROOT, "UserData"));
+  process.env.OPENMAUSBOT_DATA_DIR = path.join(STORAGE_ROOT, "Data");
+}
 // 127.0.0.1 explicitly — vite binds IPv4; a bare "localhost" here can
 // resolve to ::1 and paint a black window
 const DEV_URL = process.env.ELECTRON_START_URL ?? "http://127.0.0.1:5199";

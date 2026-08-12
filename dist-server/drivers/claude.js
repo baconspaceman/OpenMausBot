@@ -228,6 +228,9 @@ export const ClaudeDriver = {
                         ...("boxId" in computer
                             ? { OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
                             : { OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) }),
+                        ...(turn.integrations.fileBus
+                            ? { OGB_FILE_BUS_URL: turn.integrations.fileBus.url, OGB_FILE_BUS_BOT_ID: turn.integrations.fileBus.botId }
+                            : {}),
                     },
                 };
                 allowed.push("mcp__computer");
@@ -238,6 +241,18 @@ export const ClaudeDriver = {
                 // the agent just sees a computer)
                 mcpServers.computer = { ...turn.integrations.localComputer };
                 allowed.push("mcp__computer");
+            }
+            if (!turn.integrations?.computer && turn.integrations?.fileBus) {
+                mcpServers.file_bus = {
+                    command: process.execPath,
+                    args: [PROXY_PATH],
+                    env: {
+                        ...NODE_ENV_FLAG,
+                        OGB_FILE_BUS_URL: turn.integrations.fileBus.url,
+                        OGB_FILE_BUS_BOT_ID: turn.integrations.fileBus.botId,
+                    },
+                };
+                allowed.push("mcp__file_bus");
             }
             // permission broker: anything acceptEdits would silently deny becomes
             // an Allow/Deny card in chat, and the agent gets ask_user. Skipped in

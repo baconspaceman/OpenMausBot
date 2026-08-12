@@ -5,6 +5,7 @@ import { X } from "lucide-react";
 import { useStore } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
 import { ComputerBackendSettings } from "./ComputerBackendSettings";
+import { FileBusSettings } from "./FileBusSettings";
 
 export function AppSettingsPanel() {
   const { dispatch } = useStore();
@@ -40,6 +41,7 @@ export function AppSettingsPanel() {
           </div>
         </div>
         <ComputerBackendSettings />
+        <FileBusSettings />
       </div>
     </aside>
   );

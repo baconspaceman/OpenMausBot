@@ -3,7 +3,7 @@
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { InstanceConfigMap } from "./contracts.ts";
 import type { ComputerBackendSettings } from "./computer-backends.ts";
@@ -18,10 +18,12 @@ export interface AppConfig {
   /** Optional local/remote shell backends. Key material stays on disk and is
    * referenced by path only; private key contents never enter app config. */
   computer?: ComputerBackendSettings;
+  /** Host staging root for the provider-neutral File Bus. */
+  fileBus?: { root?: string };
   instances?: InstanceConfigMap;
 }
 
-export const DATA_DIR = join(homedir(), ".openmausbot");
+export const DATA_DIR = resolve(process.env.OPENMAUSBOT_DATA_DIR?.trim() || join(homedir(), ".openmausbot"));
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -86,7 +88,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box", "computer"] as const) {
+  for (const key of ["xai", "composio", "box", "computer", "fileBus"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }

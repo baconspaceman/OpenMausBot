@@ -106,6 +106,16 @@ export function buildSshArgs(config: BackendRuntimeConfig, remoteCommand: string
   return sshArgs(config, remoteCommand);
 }
 
+export function buildScpArgs(config: BackendRuntimeConfig, source: string, destination: string) {
+  const ssh = sshConfig(config);
+  if (!ssh?.host || !ssh.user) throw new Error("SSH backend needs a host and user");
+  const args = ["-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new"];
+  if (ssh.keyPath) args.push("-i", ssh.keyPath);
+  if (ssh.port) args.push("-P", String(ssh.port));
+  args.push(source, destination);
+  return args;
+}
+
 async function wslStatus(config: BackendRuntimeConfig): Promise<BackendStatus> {
   const listed = await command("wsl.exe", ["--list", "--quiet"]);
   if (!listed.ok) {
