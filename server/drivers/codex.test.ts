@@ -19,12 +19,22 @@ const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", 
 const posixOnly = describe.skipIf(process.platform === "win32");
 
 describe("CodexDriver.decodeConfig", () => {
-  it("defaults to the codex binary with fullAuto off", () => {
-    expect(CodexDriver.decodeConfig({})).toEqual({ cli: "codex", fullAuto: false });
-    expect(CodexDriver.decodeConfig(undefined)).toEqual({ cli: "codex", fullAuto: false });
+  it("defaults to Codex Luna with Extra High reasoning", () => {
+    expect(CodexDriver.decodeConfig({})).toEqual({ cli: "codex", fullAuto: false, reasoningEffort: "xhigh" });
+    expect(CodexDriver.decodeConfig(undefined)).toEqual({ cli: "codex", fullAuto: false, reasoningEffort: "xhigh" });
     expect(CodexDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
+    expect(CodexDriver.decodeConfig({ reasoningEffort: "high" }).reasoningEffort).toBe("high");
+    expect(CodexDriver.decodeConfig({ reasoningEffort: "  " }).reasoningEffort).toBe("xhigh");
     // anything non-true is off — a truthy string must not enable full auto
     expect(CodexDriver.decodeConfig({ fullAuto: "yes" }).fullAuto).toBe(false);
+  });
+
+  it("offers GPT-5.6 Luna as the default model", () => {
+    expect(CodexDriver.models.default).toBe("gpt-5.6-luna");
+    expect(CodexDriver.models.options).toContainEqual({
+      id: "gpt-5.6-luna",
+      label: "GPT-5.6 Luna (Extra High)",
+    });
   });
 });
 
@@ -69,6 +79,7 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
       threadId: "t-happy",
       text: "list files",
       system: "You are Testy.",
+      model: "gpt-5.6-luna",
     });
     await recorder.until((e) => e.type === "turn.completed");
 
@@ -98,6 +109,10 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
     const methods = seen.calls.map((c: { method: string }) => c.method);
     expect(methods).toEqual(["initialize", "initialized", "thread/start", "turn/start"]);
+    expect(seen.calls.find((c: { method: string }) => c.method === "thread/start").params).toMatchObject({
+      model: "gpt-5.6-luna",
+      config: { model_reasoning_effort: "xhigh" },
+    });
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);
     expect(turnStart.params.input[0].text).toBe("You are Testy.\n\nlist files");

@@ -25,13 +25,15 @@ import { appendNative } from "./native.ts";
 import { cliVersion, killProcessTree, spawnCliHidden } from "./cli.ts";
 
 const DRIVER_KIND = "codex";
+const DEFAULT_REASONING_EFFORT = "xhigh";
 
 // catalog ported from upstream packages/contracts/src/model.ts
 const MODELS = {
-  default: "gpt-5.6-sol",
+  default: "gpt-5.6-luna",
   options: [
     { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
     { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (Extra High)" },
     { id: "gpt-5.4", label: "GPT-5.4" },
   ],
 };
@@ -39,6 +41,8 @@ const MODELS = {
 export interface CodexConfig {
   cli: string;
   fullAuto: boolean;
+  /** Codex model reasoning level; xhigh is Anthony's preferred default. */
+  reasoningEffort?: string;
 }
 
 function decodeConfig(raw: unknown): CodexConfig {
@@ -46,6 +50,10 @@ function decodeConfig(raw: unknown): CodexConfig {
   return {
     cli: typeof o.cli === "string" ? o.cli : "codex",
     fullAuto: o.fullAuto === true,
+    reasoningEffort:
+      typeof o.reasoningEffort === "string" && o.reasoningEffort.trim()
+        ? o.reasoningEffort.trim()
+        : DEFAULT_REASONING_EFFORT,
   };
 }
 
@@ -315,7 +323,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           let startedModel: string | null = null;
           if (cursor) {
             try {
-              const resumed = await request("thread/resume", { threadId: cursor });
+              const resumed = await request("thread/resume", {
+                threadId: cursor,
+                model: turn.model || null,
+                config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
+              });
               codexThreadId = resumed?.thread?.id ?? cursor;
             } catch {
               /* resume unsupported or thread gone — start fresh below */
@@ -325,6 +337,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             const started = await request("thread/start", {
               cwd: turn.cwd ?? homedir(),
               model: turn.model || null,
+              config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
               sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
               approvalPolicy: config.fullAuto ? "never" : "on-request",
               ephemeral: false,

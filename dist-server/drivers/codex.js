@@ -14,12 +14,14 @@ import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
 import { cliVersion, killProcessTree, spawnCliHidden } from "./cli.js";
 const DRIVER_KIND = "codex";
+const DEFAULT_REASONING_EFFORT = "xhigh";
 // catalog ported from upstream packages/contracts/src/model.ts
 const MODELS = {
-    default: "gpt-5.6-sol",
+    default: "gpt-5.6-luna",
     options: [
         { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
         { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+        { id: "gpt-5.6-luna", label: "GPT-5.6 Luna (Extra High)" },
         { id: "gpt-5.4", label: "GPT-5.4" },
     ],
 };
@@ -28,6 +30,9 @@ function decodeConfig(raw) {
     return {
         cli: typeof o.cli === "string" ? o.cli : "codex",
         fullAuto: o.fullAuto === true,
+        reasoningEffort: typeof o.reasoningEffort === "string" && o.reasoningEffort.trim()
+            ? o.reasoningEffort.trim()
+            : DEFAULT_REASONING_EFFORT,
     };
 }
 const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
@@ -284,7 +289,11 @@ export const CodexDriver = {
                     let startedModel = null;
                     if (cursor) {
                         try {
-                            const resumed = await request("thread/resume", { threadId: cursor });
+                            const resumed = await request("thread/resume", {
+                                threadId: cursor,
+                                model: turn.model || null,
+                                config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
+                            });
                             codexThreadId = resumed?.thread?.id ?? cursor;
                         }
                         catch {
@@ -295,6 +304,7 @@ export const CodexDriver = {
                         const started = await request("thread/start", {
                             cwd: turn.cwd ?? homedir(),
                             model: turn.model || null,
+                            config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
                             sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
                             approvalPolicy: config.fullAuto ? "never" : "on-request",
                             ephemeral: false,
