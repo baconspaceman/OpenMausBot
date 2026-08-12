@@ -3,7 +3,7 @@
 // real .cmd formats in the wild, and safe failure for what can't be
 // unwrapped. Runs on every OS — this file is most of the point of the
 // windows CI leg.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -88,6 +88,26 @@ describe("shimScriptTarget", () => {
   it("gives up when there is no quoted JS entry (exe-style shims)", () => {
     const p = shim('@ECHO OFF\r\nbun.exe run something %*\r\n');
     expect(_internal.shimScriptTarget(p)).toBeNull();
+  });
+});
+
+describe("knownCliPaths", () => {
+  it("finds a per-user npm shim when the packaged PATH omits it", () => {
+    if (process.platform !== "win32") return;
+    const root = mkdtempSync(join(tmpdir(), "omb-cli-paths-"));
+    const npmBin = join(root, "npm");
+    mkdirSync(npmBin);
+    const shim = join(npmBin, "codex.cmd");
+    writeFileSync(shim, "@echo off\r\n");
+    const previous = process.env.APPDATA;
+    try {
+      process.env.APPDATA = root;
+      expect(_internal.knownCliPaths("codex")).toContain(shim);
+    } finally {
+      if (previous === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = previous;
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

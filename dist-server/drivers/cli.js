@@ -41,6 +41,21 @@ function whereAll(name) {
         return [];
     }
 }
+// Packaged Electron inherits the environment that launched the desktop app,
+// which may not include per-user package-manager bins. Keep PATH shadowing as
+// the first choice, then probe the standard Windows locations directly.
+function knownCliPaths(cli) {
+    if (isAbsolute(cli) || cli.includes("\\") || cli.includes("/"))
+        return [];
+    const names = [cli, `${cli}.cmd`, `${cli}.bat`, `${cli}.exe`];
+    const dirs = [
+        process.env.APPDATA ? join(process.env.APPDATA, "npm") : null,
+        process.env.USERPROFILE ? join(process.env.USERPROFILE, ".local", "bin") : null,
+        process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "Programs") : null,
+        process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "npm") : null,
+    ].filter((dir) => Boolean(dir));
+    return dirs.flatMap((dir) => names.map((name) => join(dir, name))).filter(existsSync);
+}
 /** Resolve a CLI name to a path that can actually be spawned. */
 export function resolveCli(cli) {
     if (!IS_WIN)
@@ -50,7 +65,7 @@ export function resolveCli(cli) {
         return hit.path;
     // first spawnable hit in PATH order — PATH shadowing is intentional, so a
     // shim that shadows a stale .exe must win
-    const candidates = whereAll(cli);
+    const candidates = [...whereAll(cli), ...knownCliPaths(cli)];
     const resolved = candidates.find((c) => /\.exe$/i.test(c) || SHIM_RE.test(c)) ?? cli;
     whereCache.set(cli, { path: resolved, at: Date.now() });
     return resolved;
@@ -311,4 +326,4 @@ export function spawnCliHidden(cli, args, opts) {
     return child;
 }
 // exposed for tests only
-export const _internal = { shimScriptTarget, whereCache };
+export const _internal = { shimScriptTarget, knownCliPaths, whereCache };
