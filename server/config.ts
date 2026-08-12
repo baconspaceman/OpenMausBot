@@ -21,6 +21,30 @@ export const DATA_DIR = join(homedir(), ".openmausbot");
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
+/**
+ * Private, local-only context shared with every provider turn. Keep this
+ * outside the repository: it may contain personal workflow preferences and
+ * project pointers, but must never contain provider credentials or tokens.
+ * OPENMAUSBOT_AGENT_CONTEXT_FILE is useful for a supervised alternate path.
+ */
+export const AGENT_CONTEXT_FILE =
+  process.env.OPENMAUSBOT_AGENT_CONTEXT_FILE?.trim() || join(DATA_DIR, "agent-context.md");
+const MAX_AGENT_CONTEXT_CHARS = 24_000;
+
+export function readAgentContext(file = AGENT_CONTEXT_FILE): string {
+  try {
+    const context = readFileSync(file, "utf8").trim();
+    return context.length > MAX_AGENT_CONTEXT_CHARS
+      ? `${context.slice(0, MAX_AGENT_CONTEXT_CHARS)}\n\n[Local context truncated at ${MAX_AGENT_CONTEXT_CHARS} characters.]`
+      : context;
+  } catch {
+    return "";
+  }
+}
+
+export function loadAgentContext(): string {
+  return readAgentContext();
+}
 
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,

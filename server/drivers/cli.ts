@@ -6,8 +6,8 @@
 // command runs through cmd.exe, and going through cmd.exe re-opens argv to
 // its quoting and %VAR% expansion rules (the CVE-2024-27980 class — model
 // names, personas, and MCP-config JSON all travel on argv here). Instead
-// we resolve the shim to the real JS entry and run it with
-// process.execPath — no shell at all. Native installers (the claude
+// we resolve the shim to the real JS entry and run it with a real Node
+// runtime — no shell at all. Native installers (the claude
 // installer → claude.exe) resolve to their .exe. A shim we cannot unwrap
 // is NEVER routed through cmd.exe: probes go through the pwsh wrapper
 // (args in a JSON file), and turn spawns fail with a clear error instead.
@@ -60,8 +60,7 @@ export function resolveCli(cli: string): string {
 // Two formats exist in the wild:
 //   npm cmd-shim (current):  SET "dp0=%~dp0"  →  "%dp0%\...\codex.js" %*
 //   yarn / older cmd-shim:   "%~dp0\...\codex.js" %*   (no trailing %)
-// Extract that entry so we can spawn process.execPath directly and skip
-// cmd.exe entirely.
+// Extract that entry so we can spawn Node directly and skip cmd.exe entirely.
 function shimScriptTarget(shim: string): string | null {
   try {
     const text = readFileSync(shim, "utf8");
@@ -73,6 +72,24 @@ function shimScriptTarget(shim: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Packaged Electron uses its own executable as process.execPath. It can run
+ * Node with ELECTRON_RUN_AS_NODE in simple cases, but a CLI app-server that
+ * keeps a JSON-RPC transport open is not reliable through that boundary on
+ * Windows. Prefer the real Node runtime that installed the .cmd shim and
+ * retain the Electron fallback for machines without Node on PATH.
+ */
+function resolveNodeRuntime(): { command: string; env?: Record<string, string> } {
+  if (!process.versions.electron) return { command: process.execPath };
+  const candidates = [
+    join(process.env.ProgramFiles ?? "C:\\Program Files", "nodejs", "node.exe"),
+    ...(process.env.ProgramW6432 ? [join(process.env.ProgramW6432, "nodejs", "node.exe")] : []),
+    ...whereAll("node").filter((c) => /\.exe$/i.test(c)),
+  ];
+  const command = candidates.find((c) => existsSync(c));
+  return command ? { command } : { command: process.execPath, env: { ELECTRON_RUN_AS_NODE: "1" } };
 }
 
 /**
@@ -90,11 +107,11 @@ export function resolveCliCommand(
   if (SHIM_RE.test(resolved)) {
     const script = shimScriptTarget(resolved);
     if (script) {
+      const runtime = resolveNodeRuntime();
       return {
-        command: process.execPath,
+        command: runtime.command,
         args: [script],
-        // packaged: process.execPath is the Electron binary; run as plain node
-        env: { ELECTRON_RUN_AS_NODE: "1" },
+        env: runtime.env,
       };
     }
   }

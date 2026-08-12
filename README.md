@@ -196,6 +196,15 @@ pnpm typecheck     # app + server
 pnpm build         # typecheck + production build
 ```
 
+### Private local context
+
+OpenMausBot can load account-local context for every Codex and Claude turn from
+`~/.openmausbot/agent-context.md` (or the path in
+`OPENMAUSBOT_AGENT_CONTEXT_FILE`). This file is intentionally outside the
+repository, capped before injection, and never echoed by the config API. Keep
+credentials, tokens, cookies, and other secrets out of it; use it for stable
+preferences, project pointers, and working conventions.
+
 ## Status
 
 Early but real — the loop works end to end: message → agent → streamed reply → tools → approvals →

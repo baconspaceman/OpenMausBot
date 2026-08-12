@@ -23,12 +23,6 @@
     "build:perm": "swiftc -O electron/resources/perm-helper.swift -o electron/resources/perm-helper",
     "package:win": "pnpm build && pnpm build:server && electron-builder --win --publish never"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild"
-    ]
-  },
   "dependencies": {
     "@trycua/cua-driver": "^0.19.3",
     "clsx": "^2.1.1",
