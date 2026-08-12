@@ -80,7 +80,10 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
       text: "list files",
       system: "You are Testy.",
       model: "gpt-5.6-luna",
-      integrations: { computer: { backend: "wsl", config: { distro: "Ubuntu" } } },
+      integrations: {
+        computer: { backend: "wsl", config: { distro: "Ubuntu" } },
+        composio: { url: "https://connect.example.test/mcp", key: "ck_test" },
+      },
     });
     await recorder.until((e) => e.type === "turn.completed");
 
@@ -114,7 +117,13 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
       model: "gpt-5.6-luna",
       config: {
         model_reasoning_effort: "xhigh",
-        mcp_servers: { computer: { command: process.execPath, env: { OGB_COMPUTER_BACKEND: "wsl" } } },
+        mcp_servers: {
+          computer: { command: process.execPath, env: { OGB_COMPUTER_BACKEND: "wsl" } },
+          composio: {
+            url: "https://connect.example.test/mcp",
+            http_headers: { "x-consumer-api-key": "ck_test" },
+          },
+        },
       },
     });
     // persona rides in front of the prompt text — codex has no system slot

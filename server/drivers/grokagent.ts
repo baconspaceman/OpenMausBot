@@ -84,10 +84,20 @@ const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 
 function acpMcpServers(turn: SendTurnInput) {
+  const servers: Array<Record<string, unknown>> = [];
+  const composio = turn.integrations?.composio;
+  if (composio?.key) {
+    // ACP v1 represents remote MCP headers as a list of name/value pairs.
+    servers.push({
+      type: "http",
+      name: "openmausbot-composio",
+      url: composio.url || "https://connect.composio.dev/mcp",
+      headers: [{ name: "x-consumer-api-key", value: composio.key }],
+    });
+  }
   const fileBus = turn.integrations?.fileBus;
-  if (!fileBus) return [];
-  return [
-    {
+  if (fileBus) {
+    servers.push({
       name: "openmausbot-file-bus",
       command: process.execPath,
       args: [COMPUTER_PROXY_PATH],
@@ -96,8 +106,9 @@ function acpMcpServers(turn: SendTurnInput) {
         { name: "OGB_FILE_BUS_URL", value: fileBus.url },
         { name: "OGB_FILE_BUS_BOT_ID", value: fileBus.botId },
       ],
-    },
-  ];
+    });
+  }
+  return servers;
 }
 
 export const GrokAgentDriver: ProviderDriver<GrokAgentConfig> = {

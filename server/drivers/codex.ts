@@ -73,7 +73,17 @@ const DENY_TIMEOUT_NOTE =
 function computerMcpConfig(turn: SendTurnInput) {
   const computer = turn.integrations?.computer;
   const fileBus = turn.integrations?.fileBus;
-  if (!computer && !fileBus) return {};
+  const composio = turn.integrations?.composio;
+  const mcp_servers: Record<string, unknown> = {};
+  if (composio?.key) {
+    // Codex's app-server uses the same remote MCP fields as its CLI config:
+    // static HTTP headers are named `http_headers`, not Claude's `headers`.
+    mcp_servers.composio = {
+      url: composio.url || "https://connect.composio.dev/mcp",
+      http_headers: { "x-consumer-api-key": composio.key },
+    };
+  }
+  if (!computer && !fileBus) return Object.keys(mcp_servers).length ? { mcp_servers } : {};
   const env = {
     ...NODE_ENV_FLAG,
     ...(computer
@@ -83,11 +93,8 @@ function computerMcpConfig(turn: SendTurnInput) {
       : {}),
     ...(fileBus ? { OGB_FILE_BUS_URL: fileBus.url, OGB_FILE_BUS_BOT_ID: fileBus.botId } : {}),
   };
-  return {
-    mcp_servers: {
-      [computer ? "computer" : "file_bus"]: { command: process.execPath, args: [COMPUTER_PROXY_PATH], env },
-    },
-  };
+  mcp_servers[computer ? "computer" : "file_bus"] = { command: process.execPath, args: [COMPUTER_PROXY_PATH], env };
+  return { mcp_servers };
 }
 
 export const CodexDriver: ProviderDriver<CodexConfig> = {

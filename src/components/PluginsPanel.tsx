@@ -2,8 +2,8 @@
 // from /api/connectors/catalog — the full toolkit list with logos when a
 // Composio API key is configured, a curated set otherwise. Icons resolve
 // logo → favicon → monogram.
-import { useCallback, useEffect, useState } from "react";
-import { Loader2, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Info, Loader2, RefreshCw, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 
@@ -13,6 +13,11 @@ interface ToolkitCard {
   blurb: string;
   logo: string | null;
   domain: string | null;
+}
+
+interface ConnectionState {
+  connected: boolean;
+  status?: string;
 }
 
 function ServiceIcon({ card }: { card: ToolkitCard }) {
@@ -42,20 +47,35 @@ export function PluginsPanel() {
   const { dispatch } = useStore();
   const [cards, setCards] = useState<ToolkitCard[] | null>(null);
   const [source, setSource] = useState<"api" | "curated">("curated");
-  const [configured, setConfigured] = useState(true);
-  const [status, setStatus] = useState<Record<string, { connected: boolean }>>({});
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [status, setStatus] = useState<Record<string, ConnectionState>>({});
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const pollingTimers = useRef(new Set<number>());
 
-  const refreshStatus = useCallback((slugs: string[]) => {
-    if (!slugs.length) return Promise.resolve();
+  const refreshStatus = useCallback((slugs: string[]): Promise<Record<string, ConnectionState>> => {
+    if (!slugs.length) return Promise.resolve({});
     setRefreshing(true);
     return api(`/api/connectors?services=${slugs.join(",")}`)
-      .then((r) => setStatus(r.services ?? {}))
-      .catch(() => {})
+      .then((r) => {
+        const next = r.services ?? {};
+        setStatus((previous) => ({ ...previous, ...next }));
+        setStatusError(null);
+        return next;
+      })
+      .catch((e) => {
+        setStatusError(e.message);
+        return {};
+      })
       .finally(() => setRefreshing(false));
+  }, []);
+
+  useEffect(() => () => {
+    pollingTimers.current.forEach((timer) => window.clearInterval(timer));
+    pollingTimers.current.clear();
   }, []);
 
   useEffect(() => {
@@ -74,21 +94,36 @@ export function PluginsPanel() {
     };
   }, [refreshStatus]);
 
-  const connect = (slug: string) => {
+  const connect = async (slug: string) => {
     setBusySlug(slug);
     setError(null);
-    api(`/api/connectors/${slug}/authorize`, { method: "POST" })
-      .then(({ url }) => {
-        window.open(url);
-        // the user finishes OAuth in the browser; poll a few times to catch it
-        let tries = 0;
-        const timer = setInterval(() => {
-          void refreshStatus([slug]);
-          if (++tries >= 6 || status[slug]?.connected) clearInterval(timer);
-        }, 5000);
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setBusySlug(null));
+    setStatusError(null);
+    try {
+      const { url } = await api(`/api/connectors/${slug}/authorize`, { method: "POST" });
+      if (typeof url !== "string" || !url) throw new Error("No authorization URL was returned by Composio Connect.");
+      const popup = window.open(url, "_blank", "noopener,noreferrer");
+      if (popup === null) setError("The sign-in page could not be opened. Allow pop-ups and try again.");
+
+      // OAuth finishes in the browser. Keep the row busy while we look for the callback.
+      let tries = 0;
+      const timer = window.setInterval(() => {
+        tries += 1;
+        void refreshStatus([slug]).then((next) => {
+          if (next[slug]?.connected || tries >= 12) {
+            window.clearInterval(timer);
+            pollingTimers.current.delete(timer);
+            setBusySlug(null);
+            if (!next[slug]?.connected && tries >= 12) {
+              setError(`Finish the ${slug} sign-in in your browser, then refresh this list.`);
+            }
+          }
+        });
+      }, 4000);
+      pollingTimers.current.add(timer);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusySlug(null);
+    }
   };
 
   const disconnect = (slug: string) => {
@@ -113,7 +148,12 @@ export function PluginsPanel() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
-          <div className="text-[17px] font-semibold text-ink">Connected apps</div>
+          <div>
+            <div className="text-[17px] font-semibold text-ink">Connected apps</div>
+            <div className="mt-0.5 text-[11px] text-ink-secondary">
+              {configured === null ? "Checking connector setup…" : configured ? "Composio Connect is ready" : "Composio Connect setup needed"}
+            </div>
+          </div>
           <div className="flex items-center gap-1">
             <button
               onClick={() => refreshStatus(visible.map((c) => c.slug).slice(0, 40))}
@@ -131,10 +171,17 @@ export function PluginsPanel() {
           </div>
         </div>
         <div className="mt-1 text-[13px] text-ink-secondary">
-          Apps your bots can use through Composio Connect.
+          Apps your bots can use through Composio Connect. Connecting an app opens its sign-in page in your browser.
         </div>
 
-        {!configured && (
+        <div className="mt-3 flex gap-2 rounded-lg border border-hairline/40 bg-inset/50 px-3 py-2.5 text-[12px] leading-4 text-ink-secondary">
+          <Info size={15} className="mt-0.5 shrink-0 text-accent" />
+          <div>
+            <span className="font-medium text-ink">Two extension routes:</span> this list is for Composio connected apps. Local MCP plugins—such as a locally running Discord bridge—are separate and are not discovered here yet.
+          </div>
+        </div>
+
+        {configured === false && (
           <div className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
             No Composio Connect key yet —{" "}
             <button
@@ -165,6 +212,7 @@ export function PluginsPanel() {
           </div>
         )}
         {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
+        {statusError && <div className="mt-2 text-[12px] text-danger">Connection status unavailable: {statusError}</div>}
 
         <input
           value={search}
@@ -199,7 +247,7 @@ export function PluginsPanel() {
                     <div className="truncate text-[12px] text-ink-secondary">{card.blurb}</div>
                   </div>
                   <button
-                    disabled={!configured || busy}
+                    disabled={configured !== true || busy}
                     onClick={() => (connected ? disconnect(card.slug) : connect(card.slug))}
                     className={cn(
                       "w-[92px] rounded-lg py-1.5 text-[13px] disabled:opacity-50",
