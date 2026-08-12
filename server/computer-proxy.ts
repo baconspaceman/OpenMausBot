@@ -11,9 +11,20 @@
 // CUA itself uses on Linux.
 //
 // stdout is the MCP channel — never console.log here.
+import { isShellBackend, runBackendCommand, type ShellBackend } from "./computer-backends.ts";
+
 const BOX_API = "https://ascii.dev/api/box/v1";
 const boxId = process.env.OGB_BOX_ID ?? "";
 const token = process.env.OGB_BOX_TOKEN ?? "";
+const shellBackend = isShellBackend(process.env.OGB_COMPUTER_BACKEND)
+  ? (process.env.OGB_COMPUTER_BACKEND as ShellBackend)
+  : null;
+let shellConfig: Record<string, unknown> = {};
+try {
+  shellConfig = JSON.parse(process.env.OGB_COMPUTER_CONFIG ?? "{}");
+} catch {
+  shellConfig = {};
+}
 
 async function runOnBox(command: string, timeoutMs = 60_000) {
   const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
@@ -135,7 +146,7 @@ const TOOLS = [
   {
     name: "computer_exec",
     description:
-      "Run a shell command on the bot's cloud computer (Linux, passwordless sudo, X11 desktop). Returns stdout/stderr/exit code.",
+      "Run a shell command on the bot's computer (Box, WSL2, Hyper-V, QEMU, or Oracle SSH). Returns stdout/stderr/exit code.",
     inputSchema: { type: "object", properties: { command: { type: "string" } }, required: ["command"] },
   },
   {
@@ -146,6 +157,17 @@ const TOOLS = [
 ];
 
 async function call(id: unknown, name: string, args: any) {
+  if (shellBackend) {
+    if (name !== "computer_exec") {
+      return text(id, `${shellBackend} is a shell backend; ${name} needs a desktop-capable computer such as Box`, true);
+    }
+    const out = await runBackendCommand(shellBackend, shellConfig as never, String(args.command ?? ""), 120_000);
+    return text(
+      id,
+      `exit ${out.exitCode}\n${out.stdout.slice(-6000)}${out.stderr ? `\n[stderr]\n${out.stderr.slice(-2000)}` : ""}`,
+      !out.ok,
+    );
+  }
   if (name === "screenshot") {
     const out = await runOnBox(SHOT_CMD, 60_000);
     if (!/captured/.test(out.stdout)) {
@@ -241,7 +263,10 @@ async function handle(msg: any) {
       },
     });
   }
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
+  if (msg.method === "tools/list") {
+    const tools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
+    return send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
+  }
   if (msg.method === "tools/call") {
     try {
       return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {});

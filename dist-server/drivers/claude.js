@@ -219,13 +219,15 @@ export const ClaudeDriver = {
                 allowed.push("mcp__composio");
             }
             if (turn.integrations?.computer) {
+                const computer = turn.integrations.computer;
                 mcpServers.computer = {
                     command: process.execPath,
                     args: [PROXY_PATH],
                     env: {
                         ...NODE_ENV_FLAG,
-                        OGB_BOX_ID: turn.integrations.computer.boxId,
-                        OGB_BOX_TOKEN: turn.integrations.computer.token,
+                        ...("boxId" in computer
+                            ? { OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
+                            : { OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) }),
                     },
                 };
                 allowed.push("mcp__computer");

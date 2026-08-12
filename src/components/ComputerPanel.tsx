@@ -31,6 +31,7 @@ type Phase =
   | "unconfigured"
   | "starting"
   | "ready"
+  | "shell"
   | "local"
   | "local-unavailable"
   | "off"
@@ -46,6 +47,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
   const [error, setError] = useState<string | null>(null);
   // bumped when a Box token is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
+  const shellBackend = bot.computer === "wsl" || bot.computer === "hyperv" || bot.computer === "qemu" || bot.computer === "oracle" ? bot.computer : null;
 
   // resolve the mode on open; box endpoints are only ever hit on the
   // cloud path, so local/off can never render a JSON error as an image
@@ -63,6 +65,28 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     if (bot.computer === "local") {
       setPhase(isElectron ? "local" : "local-unavailable");
       return;
+    }
+    if (shellBackend) {
+      api(`/api/bots/${bot.id}/computer`)
+        .then((status) => {
+          if (!alive) return;
+          if (!status.configured) {
+            setPhase("unconfigured");
+            return;
+          }
+          setPhase("starting");
+          return api(`/api/bots/${bot.id}/computer/provision`, { method: "POST" }).then(() => {
+            if (alive) setPhase("shell");
+          });
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setError(e.message);
+          setPhase("error");
+        });
+      return () => {
+        alive = false;
+      };
     }
     // cloud, or auto (cloud box wins when one exists, else local in-app)
     api(`/api/bots/${bot.id}/computer`)
@@ -92,7 +116,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     return () => {
       alive = false;
     };
-  }, [bot.id, bot.computer, retry]);
+  }, [bot.id, bot.computer, retry, shellBackend]);
 
   // cloud preview: SSE frames win while the bot works; otherwise poll
   const live = state.screens[bot.id];
@@ -171,6 +195,7 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
     starting: "Starting your bot's computer…",
     unconfigured: "No cloud computer configured",
     "local-unavailable": "Local preview needs the desktop app — run pnpm dev:desktop",
+    shell: `${shellBackend ? shellBackend.toUpperCase() : "Shell"} backend is ready for agent commands (no desktop preview)`,
     off: "This bot's computer is off",
     error: "Couldn't reach the computer",
   };
@@ -229,7 +254,15 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             {error}
           </div>
         )}
-        {phase === "unconfigured" && (
+        {phase === "unconfigured" && shellBackend && (
+          <div className="mt-3 rounded-xl bg-card p-4">
+            <div className="text-[13px] leading-5 text-ink-secondary">
+              Configure {shellBackend.toUpperCase()} in App Settings, then return here. The bot will use its shell for commands; Box remains the desktop-capable cloud option.
+            </div>
+            <button onClick={() => dispatch({ type: "toggleAppSettings", open: true })} className="mt-3 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover">Open app settings</button>
+          </div>
+        )}
+        {phase === "unconfigured" && !shellBackend && (
           <div className="mt-3 rounded-xl bg-card p-4">
             <div className="mb-3 text-[13px] text-ink-secondary">
               Paste a Box token from box.ascii.dev to give this bot a cloud computer — it spins up right here.
@@ -268,6 +301,25 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
           </div>
         )}
 
+        {phase === "shell" && (
+          <div className="mt-3 flex gap-2">
+            <button
+              onClick={() => run("join")}
+              disabled={pending === "join"}
+              className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-raised py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50"
+            >
+              {pending === "join" ? <Loader2 size={14} className="animate-spin" /> : <Power size={14} />}
+              Check connection
+            </button>
+            {shellBackend !== "wsl" && shellBackend !== "oracle" && (
+              <button onClick={() => run("sleep")} disabled={pending === "sleep"} className="flex items-center justify-center gap-2 rounded-lg bg-raised px-3 py-2 text-[13px] text-ink hover:bg-raised-hover disabled:opacity-50">
+                {pending === "sleep" ? <Loader2 size={14} className="animate-spin" /> : <Moon size={14} />}
+                Stop
+              </button>
+            )}
+          </div>
+        )}
+
         {/* Computer source */}
         <div className="mt-4 rounded-xl bg-card p-4">
           <div className="text-[15px] font-medium text-ink">Runs on</div>
@@ -275,11 +327,15 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
             {bot.computer ? "" : "Auto: the cloud box when one exists, else this computer. "}Pick where this bot's
             computer lives.
           </div>
-          <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
+          <div className="mt-3 grid grid-cols-2 overflow-hidden rounded-lg border border-hairline/40">
             {(
               [
                 ["cloud", "Cloud box"],
                 ["local", "This computer"],
+                ["wsl", "WSL2"],
+                ["hyperv", "Hyper-V"],
+                ["qemu", "QEMU"],
+                ["oracle", "Oracle SSH"],
                 ["off", "Off"],
               ] as const
             ).map(([mode, label], i) => (
@@ -288,7 +344,8 @@ export function ComputerPanel({ bot }: { bot: Bot }) {
                 onClick={() => dispatch({ type: "updateBot", botId: bot.id, patch: { computer: mode } })}
                 className={cn(
                   "flex-1 py-1.5 text-[13px]",
-                  i > 0 && "border-l border-hairline/40",
+                  i > 1 && "border-t border-hairline/40",
+                  i % 2 === 1 && "border-l border-hairline/40",
                   bot.computer === mode
                     ? "bg-raised text-ink"
                     : "text-ink-secondary hover:bg-raised/60 hover:text-ink",

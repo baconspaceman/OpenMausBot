@@ -69,9 +69,9 @@ export interface BotRecord {
   modelSelection: ModelSelection;
   /** provider-native continuation per instance (e.g. claude session id) */
   resumeCursors: Record<string, unknown>;
-  /** which computer the bot acts on: its cloud box, this Mac (local CUA),
-   * or none. Unset = auto (box when it exists, else local when available). */
-  computer?: "cloud" | "local" | "off";
+  /** which computer the bot acts on. Unset = auto (Box when it exists, else
+   * local when available). Shell backends are configured at app level. */
+  computer?: "cloud" | "local" | "wsl" | "hyperv" | "qemu" | "oracle" | "off";
   pinned?: boolean;
   hidden?: boolean;
   busy?: boolean;

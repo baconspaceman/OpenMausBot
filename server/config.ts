@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { InstanceConfigMap } from "./contracts.ts";
+import type { ComputerBackendSettings } from "./computer-backends.ts";
 
 export interface AppConfig {
   xai?: { key?: string; url?: string };
@@ -14,6 +15,9 @@ export interface AppConfig {
    * catalog with official logos in the plugins marketplace. */
   composio?: { key?: string; apiKey?: string; url?: string };
   box?: { token?: string };
+  /** Optional local/remote shell backends. Key material stays on disk and is
+   * referenced by path only; private key contents never enter app config. */
+  computer?: ComputerBackendSettings;
   instances?: InstanceConfigMap;
 }
 
@@ -82,7 +86,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box"] as const) {
+  for (const key of ["xai", "composio", "box", "computer"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }

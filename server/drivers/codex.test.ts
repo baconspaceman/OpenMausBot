@@ -80,6 +80,7 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
       text: "list files",
       system: "You are Testy.",
       model: "gpt-5.6-luna",
+      integrations: { computer: { backend: "wsl", config: { distro: "Ubuntu" } } },
     });
     await recorder.until((e) => e.type === "turn.completed");
 
@@ -111,7 +112,10 @@ posixOnly("CodexDriver turns (fake app-server)", () => {
     expect(methods).toEqual(["initialize", "initialized", "thread/start", "turn/start"]);
     expect(seen.calls.find((c: { method: string }) => c.method === "thread/start").params).toMatchObject({
       model: "gpt-5.6-luna",
-      config: { model_reasoning_effort: "xhigh" },
+      config: {
+        model_reasoning_effort: "xhigh",
+        mcp_servers: { computer: { command: process.execPath, env: { OGB_COMPUTER_BACKEND: "wsl" } } },
+      },
     });
     // persona rides in front of the prompt text — codex has no system slot
     const turnStart = seen.calls.at(-1);

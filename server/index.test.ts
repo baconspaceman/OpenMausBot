@@ -160,6 +160,15 @@ describe("harness HTTP API", () => {
     expect(nothing.status).toBe(400);
   });
 
+  it("stores shell backend metadata without requiring a VM or SSH connection", async () => {
+    const put = await api("PUT", "/api/config", {
+      computer: { oracle: { host: "198.51.100.20", user: "ubuntu", port: 22, keyPath: "C:\\keys\\id_ed25519" } },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.computer.oracle).toMatchObject({ configured: true, host: "198.51.100.20", user: "ubuntu", port: 22 });
+    expect(put.body.computer.oracle).not.toHaveProperty("privateKey");
+  });
+
   it("404s unknown routes with the route in the error", async () => {
     const res = await api("GET", "/api/definitely-not-a-route");
     expect(res.status).toBe(404);

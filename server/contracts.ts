@@ -10,6 +10,8 @@ export type InstanceId = string;
 export type ThreadId = string;
 export type TurnId = string;
 
+export type ShellComputerBackend = "wsl" | "hyperv" | "qemu" | "oracle";
+
 // ── model selection ────────────────────────────────────────────────────
 // "Which model" is a data value carried on the request, never a service
 // binding (upstream ModelSelectionWire). instanceId is the routing key.
@@ -98,8 +100,11 @@ export interface SendTurnInput {
   /** Per-bot integrations the driver may hand to the agent as tools. */
   integrations?: {
     composio?: { url?: string; key: string };
-    /** The bot's cloud computer (box.ascii.dev) for desktop/browser use. */
-    computer?: { boxId: string; token: string };
+    /** The bot's cloud computer (box.ascii.dev) for desktop/browser use, or a
+     * configured shell backend for a local/remote Linux environment. */
+    computer?:
+      | { boxId: string; token: string }
+      | { backend: ShellComputerBackend; config: Record<string, unknown> };
     /** Local computer use via the Electron-hosted cua-driver daemon —
      * spawn config comes verbatim from cua-connection.json (the daemon
      * MUST be spawned by Electron main; the harness only points the agent

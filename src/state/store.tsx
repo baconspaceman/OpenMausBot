@@ -57,7 +57,7 @@ export interface Bot {
   busy?: boolean;
   modelSelection: ModelSelection;
   /** Where this bot's computer runs; unset = auto (cloud box if one exists, else local). */
-  computer?: "cloud" | "local" | "off";
+  computer?: "cloud" | "local" | "wsl" | "hyperv" | "qemu" | "oracle" | "off";
   pinned?: boolean;
   hidden?: boolean;
   messages: Message[];
@@ -68,6 +68,12 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  computer?: {
+    wsl: { configured: boolean; distro?: string };
+    hyperv: { configured: boolean; vmName: string; ssh?: { host?: string; port?: number; user?: string; keyPath?: string } };
+    qemu: { configured: boolean; imagePath: string; qemuPath: string; memoryMb: number; ssh?: { host?: string; port?: number; user?: string; keyPath?: string } };
+    oracle: { configured: boolean; host: string; user: string; port: number; keyPath?: string };
+  };
 }
 
 /** One row of GET /api/instances — the model picker's data. */

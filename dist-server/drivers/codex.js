@@ -10,11 +10,20 @@
 // resumeCursor is the codex thread id; a later turn tries thread/resume
 // and falls back to a fresh thread/start.
 import { homedir } from "node:os";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { newEventId, newId } from "../contracts.js";
 import { appendNative } from "./native.js";
 import { cliVersion, killProcessTree, spawnCliHidden } from "./cli.js";
 const DRIVER_KIND = "codex";
 const DEFAULT_REASONING_EFFORT = "xhigh";
+const proxyPath = (basename) => {
+    const ts = join(dirname(fileURLToPath(import.meta.url)), "..", `${basename}.ts`);
+    return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+};
+const COMPUTER_PROXY_PATH = proxyPath("computer-proxy");
+const NODE_ENV_FLAG = { ELECTRON_RUN_AS_NODE: "1" };
 // catalog ported from upstream packages/contracts/src/model.ts
 const MODELS = {
     default: "gpt-5.6-luna",
@@ -37,6 +46,19 @@ function decodeConfig(raw) {
 }
 const QUESTION_TIMEOUT_NOTE = "No answer was given — use your best judgment.";
 const DENY_TIMEOUT_NOTE = "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+function computerMcpConfig(turn) {
+    const computer = turn.integrations?.computer;
+    if (!computer)
+        return {};
+    const env = "boxId" in computer
+        ? { ...NODE_ENV_FLAG, OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
+        : { ...NODE_ENV_FLAG, OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) };
+    return {
+        mcp_servers: {
+            computer: { command: process.execPath, args: [COMPUTER_PROXY_PATH], env },
+        },
+    };
+}
 export const CodexDriver = {
     driverKind: DRIVER_KIND,
     metadata: { displayName: "Codex", supportsMultipleInstances: true },
@@ -292,7 +314,10 @@ export const CodexDriver = {
                             const resumed = await request("thread/resume", {
                                 threadId: cursor,
                                 model: turn.model || null,
-                                config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
+                                config: {
+                                    model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+                                    ...computerMcpConfig(turn),
+                                },
                             });
                             codexThreadId = resumed?.thread?.id ?? cursor;
                         }
@@ -304,7 +329,10 @@ export const CodexDriver = {
                         const started = await request("thread/start", {
                             cwd: turn.cwd ?? homedir(),
                             model: turn.model || null,
-                            config: { model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT },
+                            config: {
+                                model_reasoning_effort: config.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
+                                ...computerMcpConfig(turn),
+                            },
                             sandbox: config.fullAuto ? "danger-full-access" : "workspace-write",
                             approvalPolicy: config.fullAuto ? "never" : "on-request",
                             ephemeral: false,

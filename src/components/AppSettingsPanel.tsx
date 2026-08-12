@@ -4,6 +4,7 @@
 import { X } from "lucide-react";
 import { useStore } from "@/state/store";
 import { ApiKeyRow } from "./ApiKeys";
+import { ComputerBackendSettings } from "./ComputerBackendSettings";
 
 export function AppSettingsPanel() {
   const { dispatch } = useStore();
@@ -38,6 +39,7 @@ export function AppSettingsPanel() {
             <ApiKeyRow section="box" label="Box token" placeholder="Token from box.ascii.dev" />
           </div>
         </div>
+        <ComputerBackendSettings />
       </div>
     </aside>
   );

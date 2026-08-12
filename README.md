@@ -68,6 +68,11 @@ providers dimmed with the reason. Switch a bot's model mid-conversation.
 Open the Computer panel and the bot's cloud desktop spins up on its own — live screen preview while it
 works, "Open desktop" to take over in your browser, or point the bot at *this computer* instead.
 
+The computer source menu also includes four opt-in shell backends: WSL2 for a free local Linux environment,
+Hyper-V for an existing Windows VM, QEMU for a user-provided OS image, and Oracle SSH for a remote Linux host.
+Box remains the desktop-capable cloud option. Shell backends are configured under App Settings and currently
+provide agent command execution without desktop screenshots; guest-display capture can be added independently.
+
 <img src="docs/screenshots/computer-panel.png" alt="Computer panel with live screen preview" width="100%">
 
 </td>
@@ -189,7 +194,18 @@ Optional, pasted once in **App Settings** (gear in the sidebar footer):
 |---|---|
 | Composio Connect key (`ck_…`) | The connected-apps marketplace |
 | Composio API key (`ak_…`) | The full 500+ app catalog with official logos |
-| Box token ([box.ascii.dev](https://box.ascii.dev)) | Cloud computers for your bots |
+| Box token ([box.ascii.dev](https://box.ascii.dev)) | Cloud desktop computers for your bots |
+
+### Local and remote computer backends
+
+Backend settings are stored in `~/.openmausbot/config.json`. SSH private keys are never copied into the file;
+only the path to the key is stored. WSL2 uses the installed `wsl.exe` command. Hyper-V and QEMU are opt-in
+and only start a configured VM/image when you select the backend and start it. Oracle SSH runs a bounded
+connection probe only when you explicitly provision that backend.
+
+The current shell contract is intentionally small and portable: the agent receives `computer_exec`, while
+desktop actions (`screenshot`, `click`, `type_text`, `press_key`, `scroll`, and `open_url`) remain Box-only
+until a guest-display bridge is implemented.
 
 ```sh
 pnpm typecheck     # app + server

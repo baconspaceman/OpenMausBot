@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
+import { backendConfig, backendConfigStatus, backendLabel, backendStatus, isShellBackend, provisionBackend, runBackendCommand, sleepBackend, } from "./computer-backends.js";
 import { ensureDirs, instanceConfigs, loadAgentContext, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
@@ -257,8 +258,13 @@ async function startTurn(botId, text) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-            const wants = bot.computer; // 'cloud' | 'local' | 'off' | undefined(auto)
-            if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
+            const wants = bot.computer; // cloud/local/wsl/hyperv/qemu/oracle/off/undefined(auto)
+            if (isShellBackend(wants)) {
+                broadcast({ kind: "computer", botId: bot.id, state: `starting-${wants}` });
+                await provisionBackend(cfg, wants);
+                integrations.computer = { backend: wants, config: backendConfig(cfg, wants) };
+            }
+            else if (wants !== "off" && wants !== "local" && box.boxConfigured(cfg)) {
                 let b = await box.findBox(cfg, bot.id).catch(() => null);
                 // the Computer driver runs ON the box — provision it on first use
                 if (!b && instance.driverKind === "boxAgent") {
@@ -296,17 +302,19 @@ async function startTurn(botId, text) {
                             "END PRIVATE LOCAL CONTEXT",
                         ].join("\n")
                         : "",
-                    integrations.computer && instance.driverKind !== "boxAgent"
+                    integrations.computer && "boxId" in integrations.computer && instance.driverKind !== "boxAgent"
                         ? "You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
-                        : integrations.localComputer
-                            ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
-                            : "",
+                        : integrations.computer && "backend" in integrations.computer
+                            ? `You have a ${backendLabel(integrations.computer.backend)} shell computer. Use computer_exec for commands; this backend does not provide desktop screenshots.`
+                            : integrations.localComputer
+                                ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
+                                : "",
                 ]
                     .filter(Boolean)
                     .join("\n\n"),
                 integrations,
             });
-            if (integrations.computer)
+            if (integrations.computer && "boxId" in integrations.computer)
                 startScreenPoller(bot.id);
         }
         catch (e) {
@@ -328,6 +336,7 @@ function configStatus() {
         xai: { configured: Boolean(cfg.xai?.key) },
         composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
         box: { configured: Boolean(cfg.box?.token) },
+        computer: backendConfigStatus(cfg),
     };
 }
 /** Rebuild the provider fleet after a config change so new keys take
@@ -502,7 +511,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box"]) {
+            for (const key of ["xai", "composio", "box", "computer"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }
@@ -533,16 +542,40 @@ const server = createServer(async (req, res) => {
         m = path.match(/^\/api\/connectors\/([\w-]+)$/);
         if (m && method === "DELETE")
             return json(res, 200, await composio.removeService(cfg, m[1]));
-        // ── the bot's cloud computer (Box) ──
+        // ── the bot's computer (Box, local, WSL2, VM, or SSH) ──
         m = path.match(/^\/api\/bots\/([\w-]+)\/computer$/);
-        if (m && method === "GET")
+        if (m && method === "GET") {
+            const bot = store.bot(m[1]);
+            if (!bot)
+                return json(res, 404, { error: "no such bot" });
+            if (isShellBackend(bot.computer))
+                return json(res, 200, await backendStatus(cfg, bot.computer));
             return json(res, 200, await box.boxStatus(cfg, m[1]));
+        }
         m = path.match(/^\/api\/bots\/([\w-]+)\/computer\/(provision|join|sleep|exec|screenshot)$/);
         if (m && method === "POST") {
             const botId = m[1];
             const bot = store.bot(botId);
             if (!bot)
                 return json(res, 404, { error: "no such bot" });
+            if (isShellBackend(bot.computer)) {
+                const backend = bot.computer;
+                switch (m[2]) {
+                    case "provision":
+                        return json(res, 200, await provisionBackend(cfg, backend));
+                    case "sleep":
+                        return json(res, 200, await sleepBackend(cfg, backend));
+                    case "exec": {
+                        const body = await readBody(req);
+                        const out = await runBackendCommand(backend, backendConfig(cfg, backend), String(body.command ?? ""));
+                        return json(res, 200, { exitCode: out.exitCode, stdout: out.stdout.slice(-4000), stderr: out.stderr.slice(-2000) });
+                    }
+                    case "join":
+                        return json(res, 200, { ok: true, state: (await backendStatus(cfg, backend)).state });
+                    case "screenshot":
+                        return json(res, 501, { error: `${backendLabel(backend)} is a shell backend; desktop screenshots are not available yet` });
+                }
+            }
             switch (m[2]) {
                 case "provision":
                     return json(res, 200, await box.provisionBox(cfg, botId, bot.name));

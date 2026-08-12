@@ -51,7 +51,10 @@ export const BoxAgentDriver = {
         };
         const sendTurn = async (turn) => {
             const { threadId } = turn;
-            const boxId = turn.integrations?.computer?.boxId;
+            const computer = turn.integrations?.computer;
+            const boxId = computer && "boxId" in computer ? computer.boxId : undefined;
+            if (computer && !boxId)
+                throw new Error("the Box agent only supports the Box computer backend; choose Claude or Codex for shell backends");
             if (!token)
                 throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
             if (!boxId)
