@@ -1,7 +1,6 @@
 import { copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { DATA_DIR } from "./config.js";
@@ -115,6 +114,6 @@ export async function listFileBus(cfg) {
     };
 }
 export function fileBusStatus(cfg) {
-    const configuredRoot = cfg.fileBus?.root?.trim() || join(homedir(), ".openmausbot", "file-bus");
+    const configuredRoot = cfg.fileBus?.root?.trim() || join(DATA_DIR, "file-bus");
     return { configured: Boolean(cfg.fileBus?.root), root: configuredRoot, exists: existsSync(configuredRoot) };
 }
