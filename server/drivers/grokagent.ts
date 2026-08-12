@@ -25,7 +25,8 @@
 // `_meta.isReplay` is dropped. Verified against grok 1.0.0.
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { cliVersion, killProcessTree, spawnCliHidden } from "./cli.ts";
 
@@ -42,6 +43,11 @@ import { newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "grokAgent";
+const proxyPath = (basename: string) => {
+  const ts = join(dirname(fileURLToPath(import.meta.url)), "..", `${basename}.ts`);
+  return existsSync(ts) ? ts : ts.replace(/\.ts$/, ".js");
+};
+const COMPUTER_PROXY_PATH = proxyPath("computer-proxy");
 
 // The CLI catalog is account-driven (`grok models` reports exactly one today);
 // this should eventually be read from the initialize result's
@@ -76,6 +82,23 @@ const LOGIN_NOTE = "Grok CLI is not signed in — run `grok login` in a terminal
 const INIT_TIMEOUT = 20_000;
 const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
+
+function acpMcpServers(turn: SendTurnInput) {
+  const fileBus = turn.integrations?.fileBus;
+  if (!fileBus) return [];
+  return [
+    {
+      name: "openmausbot-file-bus",
+      command: process.execPath,
+      args: [COMPUTER_PROXY_PATH],
+      env: [
+        { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "OGB_FILE_BUS_URL", value: fileBus.url },
+        { name: "OGB_FILE_BUS_BOT_ID", value: fileBus.botId },
+      ],
+    },
+  ];
+}
 
 export const GrokAgentDriver: ProviderDriver<GrokAgentConfig> = {
   driverKind: DRIVER_KIND,
@@ -393,21 +416,17 @@ export const GrokAgentDriver: ProviderDriver<GrokAgentConfig> = {
             throw new Error(LOGIN_NOTE);
           }
           const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+          const mcpServers = acpMcpServers(turn);
           if (cursor) {
             try {
-              // mcpServers is empty: turn.integrations (Composio / the cloud
-              // computer / the local cua daemon) is not wired to this driver
-              // yet. The agent advertises mcpCapabilities http+sse, so a
-              // follow-up can map composio onto an ACP mcpServer entry; until
-              // then bots here have Grok Build's native tools only.
-              await request("session/load", { sessionId: cursor, cwd, mcpServers: [] }, LOAD_SESSION_TIMEOUT);
+              await request("session/load", { sessionId: cursor, cwd, mcpServers }, LOAD_SESSION_TIMEOUT);
               sessionId = cursor;
             } catch {
               /* session gone, load unsupported, or too slow — start fresh */
             }
           }
           if (!sessionId) {
-            const started = await request("session/new", { cwd, mcpServers: [] }, NEW_SESSION_TIMEOUT);
+            const started = await request("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
             sessionId = typeof started?.sessionId === "string" ? started.sessionId : null;
             if (!sessionId) throw new Error("session/new returned no sessionId");
           }
