@@ -6,11 +6,13 @@
 import { randomBytes } from "node:crypto";
 
 import type { AppConfig } from "./config.ts";
+import { rpcGetChannel, rpcListChannels } from "./discord-rpc.ts";
 
 const API_BASE = "https://discord.com/api/v10";
 const AUTHORIZE_URL = "https://discord.com/oauth2/authorize";
 const TOKEN_URL = "https://discord.com/api/oauth2/token";
 const DEFAULT_SCOPE = "identify guilds";
+const RPC_SCOPE = "identify guilds rpc messages.read";
 const STATE_TTL_MS = 10 * 60_000;
 
 type ConfigWriter = (patch: Partial<AppConfig>) => void;
@@ -28,6 +30,7 @@ export class DiscordAccountError extends Error {
 interface PendingOAuth {
   state: string;
   redirectUri: string;
+  scope: string;
   createdAt: number;
 }
 
@@ -43,12 +46,15 @@ export function defaultDiscordRedirectUri(port = 8799): string {
 
 export function discordAccountStatus(cfg: AppConfig, port = 8799) {
   const current = account(cfg);
+  const scopes = (current.scope || DEFAULT_SCOPE).split(/\s+/).filter(Boolean);
   return {
     configured: Boolean(current.clientId && current.clientSecret),
     connected: Boolean(current.accessToken || current.refreshToken),
     clientIdConfigured: Boolean(current.clientId),
     redirectUri: current.redirectUri || defaultDiscordRedirectUri(port),
-    scopes: (current.scope || DEFAULT_SCOPE).split(/\s+/).filter(Boolean),
+    scopes,
+    rpcEnabled: scopes.includes("rpc"),
+    messageReadEnabled: scopes.includes("messages.read"),
     expiresAt: typeof current.expiresAt === "number" ? current.expiresAt : null,
     user: current.user ?? null,
   };
@@ -78,17 +84,18 @@ function validateRedirectUri(value: string) {
   }
 }
 
-export function startDiscordOAuth(cfg: AppConfig, port = 8799) {
+export function startDiscordOAuth(cfg: AppConfig, port = 8799, enableRpc = false) {
   const current = requireConfig(cfg);
   const callback = redirectUri(cfg, port);
   validateRedirectUri(callback);
   const state = randomBytes(24).toString("hex");
-  pendingOAuth = { state, redirectUri: callback, createdAt: Date.now() };
+  const scope = enableRpc ? RPC_SCOPE : current.scope || DEFAULT_SCOPE;
+  pendingOAuth = { state, redirectUri: callback, scope, createdAt: Date.now() };
   const params = new URLSearchParams({
     client_id: current.clientId!,
     response_type: "code",
     redirect_uri: callback,
-    scope: current.scope || DEFAULT_SCOPE,
+    scope,
     state,
   });
   return { authorizeUrl: `${AUTHORIZE_URL}?${params.toString()}`, redirectUri: callback };
@@ -151,7 +158,7 @@ export async function completeDiscordOAuth(
       accessToken: token.access_token,
       refreshToken: token.refresh_token,
       expiresAt: Date.now() + Number(token.expires_in ?? 604_800) * 1000,
-      scope: token.scope || current.scope || DEFAULT_SCOPE,
+      scope: token.scope || pending.scope || current.scope || DEFAULT_SCOPE,
       user: {
         id: String(user.id),
         username: typeof user.username === "string" ? user.username : undefined,
@@ -241,9 +248,12 @@ export async function listDiscordGuilds(cfg: AppConfig, writer?: ConfigWriter) {
 }
 
 export async function listDiscordChannels(cfg: AppConfig, guildId: string, writer?: ConfigWriter) {
-  const rows = await fetchDiscord(cfg, `/guilds/${encodeURIComponent(guildId)}/channels`, undefined, undefined, writer);
-  if (!Array.isArray(rows)) return [];
-  return rows.map((channel: any) => ({
+  void writer;
+  const scopes = (account(cfg).scope || DEFAULT_SCOPE).split(/\s+/);
+  const rows = scopes.includes("rpc") && scopes.includes("messages.read")
+    ? await rpcListChannels(cfg, guildId)
+    : (() => { throw new DiscordAccountError("Discord can list your guilds with standard OAuth, but channel/thread research requires the local RPC + messages.read connection. Use Enable channels & threads in OMB.", 403); })();
+  return (Array.isArray(rows) ? rows : []).map((channel: any) => ({
     id: String(channel.id),
     guildId: String(channel.guild_id ?? guildId),
     name: String(channel.name ?? "Unnamed channel"),
@@ -290,23 +300,54 @@ function mapMessages(rows: any[]) {
 }
 
 export async function listDiscordMessages(cfg: AppConfig, channelId: string, params: URLSearchParams, writer?: ConfigWriter) {
-  const rows = await fetchDiscord(
-    cfg,
-    `/channels/${encodeURIComponent(channelId)}/messages?${messageQuery(params).toString()}`,
-    undefined,
-    undefined,
-    writer,
-  );
-  return Array.isArray(rows) ? mapMessages(rows) : [];
+  void writer;
+  const scopes = (account(cfg).scope || DEFAULT_SCOPE).split(/\s+/);
+  if (!scopes.includes("rpc") || !scopes.includes("messages.read")) {
+    throw new DiscordAccountError("Discord channel/thread research requires the local RPC + messages.read connection. Use Enable channels & threads in OMB.", 403);
+  }
+  const data = await rpcGetChannel(cfg, channelId);
+  const rows = Array.isArray(data?.messages) ? data.messages : [];
+  const limit = Math.min(Math.max(Number(params.get("limit") || 25), 1), 100);
+  return mapMessages(rows).slice(0, limit);
+}
+
+export async function getDiscordChannel(cfg: AppConfig, channelId: string) {
+  const scopes = (account(cfg).scope || DEFAULT_SCOPE).split(/\s+/);
+  if (!scopes.includes("rpc") || !scopes.includes("messages.read")) {
+    throw new DiscordAccountError("Discord channel/thread research requires the local RPC + messages.read connection. Use Enable channels & threads in OMB.", 403);
+  }
+  const data = await rpcGetChannel(cfg, channelId);
+  return {
+    channel: {
+      id: String(data?.id ?? channelId),
+      guildId: data?.guild_id ? String(data.guild_id) : null,
+      name: data?.name ? String(data.name) : null,
+      type: typeof data?.type === "number" ? data.type : null,
+      parentId: data?.parent_id ? String(data.parent_id) : null,
+      topic: data?.topic ? String(data.topic) : null,
+    },
+    messages: Array.isArray(data?.messages) ? mapMessages(data.messages) : [],
+  };
 }
 
 export async function searchDiscordGuild(cfg: AppConfig, guildId: string, params: URLSearchParams, writer?: ConfigWriter) {
+  void writer;
   const content = (params.get("content") || "").trim();
   if (!content) throw new DiscordAccountError("A search phrase is required.");
-  const query = new URLSearchParams({ content, limit: String(Math.min(Math.max(Number(params.get("limit") || 25), 1), 25)) });
-  const data = await fetchDiscord(cfg, `/guilds/${encodeURIComponent(guildId)}/messages/search?${query.toString()}`, undefined, undefined, writer);
-  const rows = Array.isArray(data?.messages) ? data.messages.flat().filter(Boolean) : [];
-  return mapMessages(rows);
+  const scopes = (account(cfg).scope || DEFAULT_SCOPE).split(/\s+/);
+  if (scopes.includes("rpc") && scopes.includes("messages.read")) {
+    const channels = await rpcListChannels(cfg, guildId);
+    const wanted = channels.filter((channel: any) => [0, 5, 10, 11, 12].includes(Number(channel.type))).slice(0, 40);
+    const results: any[] = [];
+    for (const channel of wanted) {
+      const data = await rpcGetChannel(cfg, String(channel.id));
+      const rows = Array.isArray(data?.messages) ? data.messages : [];
+      results.push(...rows.filter((message: any) => String(message.content ?? "").toLowerCase().includes(content.toLowerCase())));
+      if (results.length >= 25) break;
+    }
+    return mapMessages(results).slice(0, 25);
+  }
+  throw new DiscordAccountError("Discord guild search requires the local RPC + messages.read connection. Use Enable channels & threads in OMB.", 403);
 }
 
 export async function sendDiscordMessage(cfg: AppConfig, channelId: string, content: string, writer?: ConfigWriter) {

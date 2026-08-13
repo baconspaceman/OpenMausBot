@@ -12,6 +12,7 @@ import { discoverLocalMcp } from "./local-mcp.ts";
 import {
   completeDiscordOAuth,
   discordAccountStatus,
+  getDiscordChannel,
   listDiscordChannels,
   listDiscordGuilds,
   listDiscordMessages,
@@ -19,6 +20,7 @@ import {
   sendDiscordMessage,
   startDiscordOAuth,
 } from "./discord-account.ts";
+import { inspectGitHubUrl } from "./github-research.ts";
 import {
   backendConfig,
   backendConfigStatus,
@@ -330,7 +332,7 @@ async function startTurn(botId: string, text: string) {
       integrations.fileBus = {
         url: `http://127.0.0.1:${PORT}`,
         botId: bot.id,
-        discordAccountEnabled: discordAccountStatus(cfg, PORT).connected,
+        discordAccountEnabled: discordAccountStatus(cfg, PORT).rpcEnabled && discordAccountStatus(cfg, PORT).messageReadEnabled,
       };
       const wants = bot.computer; // cloud/local/wsl/hyperv/qemu/oracle/off/undefined(auto)
       if (isShellBackend(wants)) {
@@ -383,8 +385,10 @@ async function startTurn(botId: string, text: string) {
               : "",
           "The OpenMausBot File Bus is available to every bot. Use file_transfer to move files between host, current backend, WSL2, Hyper-V, QEMU, Oracle SSH, and future adapters. Host paths are relative to the configured File Bus root; do not place credentials or tokens in transfer paths or command output.",
           integrations.fileBus.discordAccountEnabled
-            ? "Discord Account Research is attached as read-only tools for this turn. It acts through the owner's official Discord OAuth2 connection and may list the owner's guilds, inspect readable channels/messages, and search readable guild content. Do not send messages, modify Discord, or treat membership as permission to read every channel."
-            : "Discord Account Research is not connected for this turn.",
+            ? "Discord Account Research is attached through the owner's official local Discord RPC connection as read-only tools. It may list visible guild channels, inspect readable text channels and thread IDs, read recent messages, search bounded recent channel content, and identify GitHub links for read-only inspection. Do not send messages, modify Discord, or treat membership as permission to read every private channel."
+            : discordAccountStatus(cfg, PORT).connected
+              ? "Discord Account Research is connected for guild listing, but channel/thread research is not enabled. Do not repeatedly retry channel tools; ask the owner to enable local Discord RPC + messages.read."
+              : "Discord Account Research is not connected for this turn.",
           integrations.localMcp?.length
             ? `Local MCP plugins attached for this turn: ${integrations.localMcp.map((server) => server.name).join(", ")}. Use their tools when the user asks about those connected services.`
             : "No local MCP plugin is reachable for this turn.",
@@ -643,7 +647,8 @@ const server = createServer(async (req, res) => {
       return json(res, 200, discordAccountStatus(cfg, PORT));
     }
     if (method === "POST" && path === "/api/discord-account/oauth/start") {
-      return json(res, 200, startDiscordOAuth(cfg, PORT));
+      const body = await readBody(req);
+      return json(res, 200, startDiscordOAuth(cfg, PORT, body.rpc === true));
     }
     if (method === "GET" && path === "/api/discord-account/oauth/callback") {
       const code = url.searchParams.get("code") ?? "";
@@ -667,6 +672,10 @@ const server = createServer(async (req, res) => {
     if (m && method === "GET") {
       return json(res, 200, { channels: await listDiscordChannels(cfg, decodeURIComponent(m[1]), (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
     }
+    m = path.match(/^\/api\/discord-account\/channels\/([^/]+)$/);
+    if (m && method === "GET") {
+      return json(res, 200, await getDiscordChannel(cfg, decodeURIComponent(m[1])));
+    }
     m = path.match(/^\/api\/discord-account\/channels\/([^/]+)\/messages$/);
     if (m && method === "GET") {
       return json(res, 200, { messages: await listDiscordMessages(cfg, decodeURIComponent(m[1]), url.searchParams, (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
@@ -679,6 +688,10 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if (body.confirm !== "SEND") return json(res, 428, { error: "Sending Discord messages requires explicit confirmation: confirm must equal SEND." });
       return json(res, 200, await sendDiscordMessage(cfg, String(body.channelId ?? ""), String(body.content ?? ""), (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }));
+    }
+    if (method === "GET" && path === "/api/github/inspect") {
+      const target = url.searchParams.get("url") ?? "";
+      return json(res, 200, await inspectGitHubUrl(target));
     }
 
     // ── provider-neutral File Bus ──

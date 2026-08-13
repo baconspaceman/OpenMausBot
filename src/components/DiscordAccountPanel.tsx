@@ -9,6 +9,8 @@ interface AccountStatus {
   clientIdConfigured: boolean;
   redirectUri: string;
   scopes: string[];
+  rpcEnabled: boolean;
+  messageReadEnabled: boolean;
   expiresAt: number | null;
   user: { id: string; username?: string; globalName?: string } | null;
 }
@@ -40,6 +42,8 @@ const EMPTY_STATUS: AccountStatus = {
   clientIdConfigured: false,
   redirectUri: "",
   scopes: [],
+  rpcEnabled: false,
+  messageReadEnabled: false,
   expiresAt: null,
   user: null,
 };
@@ -55,6 +59,7 @@ export function DiscordAccountPanel() {
   const [selectedGuild, setSelectedGuild] = useState<Guild | null>(null);
   const [selectedChannel, setSelectedChannel] = useState<Channel | null>(null);
   const [search, setSearch] = useState("");
+  const [directChannelId, setDirectChannelId] = useState("");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<"save" | "connect" | "disconnect" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -104,12 +109,12 @@ export function DiscordAccountPanel() {
     }
   };
 
-  const connect = async () => {
+  const connect = async (enableRpc = false) => {
     setBusy("connect");
     setError(null);
     setNotice(null);
     try {
-      const { authorizeUrl } = await api("/api/discord-account/oauth/start", { method: "POST" });
+      const { authorizeUrl } = await api("/api/discord-account/oauth/start", { method: "POST", body: JSON.stringify({ rpc: enableRpc }) });
       const popup = window.open(authorizeUrl, "omb-discord-account", "width=620,height=760");
       if (!popup) throw new Error("The Discord sign-in window was blocked. Allow pop-ups and try again.");
       let tries = 0;
@@ -121,7 +126,7 @@ export function DiscordAccountPanel() {
           if (next.connected || tries >= 30) {
             window.clearInterval(timer);
             setBusy(null);
-            if (next.connected) setNotice("Discord account connected. OMB can now research the guilds your account can access.");
+            if (next.connected) setNotice(enableRpc && next.rpcEnabled && next.messageReadEnabled ? "Discord local RPC is enabled. OMB can now inspect visible channels, text channels, and thread IDs." : "Discord account connected. OMB can list your guilds; enable local RPC for channel and thread research.");
             else setError("Discord sign-in did not finish. Try Connect again.");
           }
         } catch (e) {
@@ -158,6 +163,10 @@ export function DiscordAccountPanel() {
     setSelectedGuild(guild);
     setSelectedChannel(null);
     setMessages([]);
+    if (!status.rpcEnabled || !status.messageReadEnabled) {
+      setError("Guild listing is connected. Enable local Discord RPC + messages.read to inspect channels and threads.");
+      return;
+    }
     setLoading(true);
     try {
       const body = await api(`/api/discord-account/guilds/${encodeURIComponent(guild.id)}/channels`);
@@ -198,6 +207,26 @@ export function DiscordAccountPanel() {
     }
   };
 
+  const openDirectChannel = async () => {
+    if (!directChannelId.trim()) return;
+    if (!status.rpcEnabled || !status.messageReadEnabled) {
+      setError("Direct channel/thread lookup requires local Discord RPC + messages.read.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const body = await api(`/api/discord-account/channels/${encodeURIComponent(directChannelId.trim())}`);
+      setMessages(body.messages ?? []);
+      setSelectedChannel(body.channel ? { id: body.channel.id, name: body.channel.name || body.channel.id, type: body.channel.type ?? 0, parentId: body.channel.parentId ?? null } : null);
+      setNotice(`Opened Discord channel/thread ID ${directChannelId.trim()}.`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-accent/25 bg-accent/5 p-4">
       <div className="flex items-start gap-3">
@@ -218,6 +247,11 @@ export function DiscordAccountPanel() {
           Create a Discord Developer Application, add this callback URL, then paste its Client ID and Client Secret here. The secret is write-only in OMB.
         </div>
       )}
+      {status.connected && (!status.rpcEnabled || !status.messageReadEnabled) && (
+        <div className="mt-3 rounded-lg border border-warning/30 bg-warning/10 p-3 text-[12px] leading-4 text-warning">
+          Guild listing is active. Channel, text-channel, and thread-ID research uses Discord’s official local RPC and requires Discord desktop to be open. Discord may require this application to be approved or to list you as a tester before granting the RPC scopes.
+        </div>
+      )}
 
       <div className="mt-3 grid gap-2">
         <input value={clientId} onChange={(e) => setClientId(e.target.value)} placeholder={status.clientIdConfigured ? "Client ID saved (paste to replace)" : "Discord Client ID"} className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[12px] text-ink placeholder:text-ink-secondary focus:outline-none" />
@@ -229,16 +263,19 @@ export function DiscordAccountPanel() {
         <button onClick={save} disabled={busy !== null || (!clientId.trim() && !status.clientIdConfigured) || (!clientSecret.trim() && !status.configured)} className="flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-ink disabled:opacity-50">
           {busy === "save" ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Save locally
         </button>
-        <button onClick={connect} disabled={busy !== null || !status.configured} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] text-white disabled:opacity-50">
+        <button onClick={() => connect(false)} disabled={busy !== null || !status.configured} className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12px] text-white disabled:opacity-50">
           {busy === "connect" ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />} {status.connected ? "Reconnect" : "Connect Discord"}
         </button>
+        {status.connected && (!status.rpcEnabled || !status.messageReadEnabled) && <button onClick={() => connect(true)} disabled={busy !== null} className="flex items-center gap-1.5 rounded-lg bg-accent/15 px-3 py-1.5 text-[12px] text-accent disabled:opacity-50">
+          {busy === "connect" ? <Loader2 size={13} className="animate-spin" /> : <Shield size={13} />} Enable channels &amp; threads
+        </button>}
         {status.connected && <button onClick={disconnect} disabled={busy !== null} className="flex items-center gap-1.5 rounded-lg bg-raised px-3 py-1.5 text-[12px] text-danger disabled:opacity-50">{busy === "disconnect" ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />} Disconnect</button>}
       </div>
 
       {status.connected && (
         <div className="mt-4 border-t border-hairline/30 pt-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="text-[12px] text-ink-secondary">Connected as <span className="text-ink">{status.user?.globalName || status.user?.username || "Discord user"}</span> · {guilds.length} guild(s)</div>
+            <div className="text-[12px] text-ink-secondary">Connected as <span className="text-ink">{status.user?.globalName || status.user?.username || "Discord user"}</span> · {guilds.length} guild(s) · {status.rpcEnabled && status.messageReadEnabled ? <span className="text-success">channels enabled</span> : <span className="text-warning">guild list only</span>}</div>
             <button onClick={refreshGuilds} className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" title="Refresh guilds"><RefreshCw size={14} className={cn(loading && "animate-spin")} /></button>
           </div>
           <div className="mt-2 max-h-32 overflow-y-auto rounded-lg border border-hairline/30 bg-inset/40">
@@ -252,6 +289,7 @@ export function DiscordAccountPanel() {
               {!channels.length && <span className="text-[11px] text-ink-secondary">No readable text channels returned.</span>}
             </div>
             <div className="mt-2 flex gap-1.5"><input value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()} placeholder="Search this guild" className="min-w-0 flex-1 rounded-md border border-hairline/30 bg-inset px-2 py-1.5 text-[11px] text-ink placeholder:text-ink-secondary focus:outline-none" /><button onClick={runSearch} disabled={!search.trim() || loading} className="rounded-md bg-raised px-2 text-ink-secondary disabled:opacity-50"><Search size={13} /></button></div>
+            <div className="mt-2 flex gap-1.5"><input value={directChannelId} onChange={(e) => setDirectChannelId(e.target.value)} onKeyDown={(e) => e.key === "Enter" && openDirectChannel()} placeholder="Open channel or thread ID" className="min-w-0 flex-1 rounded-md border border-hairline/30 bg-inset px-2 py-1.5 text-[11px] text-ink placeholder:text-ink-secondary focus:outline-none" /><button onClick={openDirectChannel} disabled={!directChannelId.trim() || loading} className="rounded-md bg-raised px-2 text-ink-secondary disabled:opacity-50">Open</button></div>
             {messages.length > 0 && <div className="mt-2 max-h-44 space-y-1.5 overflow-y-auto">{messages.map((message) => <div key={message.id} className="rounded-md bg-inset/80 px-2.5 py-2 text-[11px]"><div className="text-ink-secondary">{message.author?.globalName || message.author?.username || "unknown"}</div><div className="mt-0.5 whitespace-pre-wrap break-words text-ink">{message.content || "[attachment or embed]"}</div></div>)}</div>}
           </div>}
         </div>

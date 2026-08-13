@@ -74,6 +74,8 @@ export interface ConfigStatus {
     clientIdConfigured: boolean;
     redirectUri: string;
     scopes: string[];
+    rpcEnabled: boolean;
+    messageReadEnabled: boolean;
     expiresAt: number | null;
     user: { id: string; username?: string; globalName?: string } | null;
   };

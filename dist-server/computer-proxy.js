@@ -176,12 +176,17 @@ const DISCORD_ACCOUNT_TOOLS = [
         inputSchema: { type: "object", properties: { guild_id: { type: "string" } }, required: ["guild_id"] },
     },
     {
+        name: "discord_account_get_channel",
+        description: "Open a Discord text-channel or thread directly by its channel/thread ID through the owner's local Discord client, returning its metadata and recent messages.",
+        inputSchema: { type: "object", properties: { channel_id: { type: "string" } }, required: ["channel_id"] },
+    },
+    {
         name: "discord_account_read_messages",
-        description: "Read recent messages from a Discord channel through the owner's account. Use only for the user's stated research task; never infer access to private channels.",
+        description: "Read recent messages from a Discord text channel or thread by its channel/thread ID through the owner's account. Use only for the user's stated research task; never infer access to private channels.",
         inputSchema: {
             type: "object",
             properties: {
-                channel_id: { type: "string" },
+                channel_id: { type: "string", description: "A Discord text-channel ID or thread ID" },
                 limit: { type: "number", description: "1-100, default 25" },
                 before: { type: "string" },
                 after: { type: "string" },
@@ -197,6 +202,13 @@ const DISCORD_ACCOUNT_TOOLS = [
             properties: { guild_id: { type: "string" }, content: { type: "string" }, limit: { type: "number" } },
             required: ["guild_id", "content"],
         },
+    },
+];
+const GITHUB_TOOLS = [
+    {
+        name: "github_inspect_url",
+        description: "Inspect a public GitHub repository, issue, pull request, file, or tree link found during research. Read-only: never clone, modify, comment, or merge.",
+        inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
     },
 ];
 async function fileBusRequest(path, init) {
@@ -219,6 +231,15 @@ async function accountRequest(path) {
     const body = await res.json().catch(() => null);
     if (!res.ok)
         throw new Error(body?.error || `Discord Account Research request failed (${res.status})`);
+    return body;
+}
+async function researchRequest(path) {
+    if (!fileBusUrl)
+        throw new Error("OpenMausBot research tools are not attached to this turn");
+    const res = await fetch(`${fileBusUrl}${path}`, { signal: AbortSignal.timeout(30_000) });
+    const body = await res.json().catch(() => null);
+    if (!res.ok)
+        throw new Error(body?.error || `Research request failed (${res.status})`);
     return body;
 }
 async function call(id, name, args) {
@@ -256,6 +277,16 @@ async function call(id, name, args) {
             return text(id, `Discord Account Research failed: ${error.message}`, true);
         }
     }
+    if (name === "discord_account_get_channel") {
+        try {
+            const channelId = encodeURIComponent(String(args.channel_id ?? ""));
+            const body = await accountRequest(`/api/discord-account/channels/${channelId}`);
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `Discord Account Research failed: ${error.message}`, true);
+        }
+    }
     if (name === "discord_account_search_guild") {
         try {
             const query = new URLSearchParams({ content: String(args.content ?? "") });
@@ -267,6 +298,16 @@ async function call(id, name, args) {
         }
         catch (error) {
             return text(id, `Discord Account Research failed: ${error.message}`, true);
+        }
+    }
+    if (name === "github_inspect_url") {
+        try {
+            const target = encodeURIComponent(String(args.url ?? ""));
+            const body = await researchRequest(`/api/github/inspect?url=${target}`);
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `GitHub inspection failed: ${error.message}`, true);
         }
     }
     if (name === "file_transfer") {
@@ -397,7 +438,7 @@ async function handle(msg) {
     if (msg.method === "tools/list") {
         const computerTools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
         const tools = fileBusUrl
-            ? [...computerTools, ...FILE_TOOLS, ...(discordAccountEnabled ? DISCORD_ACCOUNT_TOOLS : [])]
+            ? [...computerTools, ...FILE_TOOLS, ...(discordAccountEnabled ? DISCORD_ACCOUNT_TOOLS : []), ...GITHUB_TOOLS]
             : computerTools;
         return send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
     }
