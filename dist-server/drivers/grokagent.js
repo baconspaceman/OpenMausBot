@@ -60,6 +60,14 @@ const NEW_SESSION_TIMEOUT = 30_000;
 const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 function acpMcpServers(turn) {
     const servers = [];
+    for (const server of turn.integrations?.localMcp ?? []) {
+        servers.push({
+            type: "http",
+            name: server.name,
+            url: server.url,
+            headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
+        });
+    }
     const composio = turn.integrations?.composio;
     if (composio?.key) {
         // ACP v1 represents remote MCP headers as a list of name/value pairs.

@@ -210,6 +210,14 @@ export const ClaudeDriver = {
             // acceptEdits run silently denies anything unlisted)
             const mcpServers = {};
             const allowed = [];
+            for (const server of turn.integrations?.localMcp ?? []) {
+                mcpServers[server.name] = {
+                    type: "http",
+                    url: server.url,
+                    ...(server.headers ? { headers: server.headers } : {}),
+                };
+                allowed.push(`mcp__${server.name}`);
+            }
             if (turn.integrations?.composio?.key) {
                 mcpServers.composio = {
                     type: "http",

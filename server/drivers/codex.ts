@@ -75,10 +75,18 @@ function computerMcpConfig(turn: SendTurnInput) {
   const fileBus = turn.integrations?.fileBus;
   const composio = turn.integrations?.composio;
   const mcp_servers: Record<string, unknown> = {};
+  for (const server of turn.integrations?.localMcp ?? []) {
+    mcp_servers[server.name] = {
+      type: "streamable_http",
+      url: server.url,
+      ...(server.headers ? { http_headers: server.headers } : {}),
+    };
+  }
   if (composio?.key) {
     // Codex's app-server uses the same remote MCP fields as its CLI config:
     // static HTTP headers are named `http_headers`, not Claude's `headers`.
     mcp_servers.composio = {
+      type: "streamable_http",
       url: composio.url || "https://connect.composio.dev/mcp",
       http_headers: { "x-consumer-api-key": composio.key },
     };

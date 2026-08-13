@@ -20,6 +20,10 @@ export interface AppConfig {
   computer?: ComputerBackendSettings;
   /** Host staging root for the provider-neutral File Bus. */
   fileBus?: { root?: string };
+  /** Optional local MCP endpoints. The Discord bridge has a safe localhost default. */
+  localMcp?: {
+    servers?: Record<string, { url?: string; enabled?: boolean; headers?: Record<string, string> }>;
+  };
   instances?: InstanceConfigMap;
 }
 
@@ -88,7 +92,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box", "computer", "fileBus"] as const) {
+  for (const key of ["xai", "composio", "box", "computer", "fileBus", "localMcp"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }

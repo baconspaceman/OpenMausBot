@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
+import { discoverLocalMcp } from "./local-mcp.js";
 import { backendConfig, backendConfigStatus, backendLabel, backendStatus, isShellBackend, provisionBackend, runBackendCommand, sleepBackend, stopManagedBackends, } from "./computer-backends.js";
 import { ensureDirs, instanceConfigs, loadAgentContext, loadConfig, saveConfig, EVENTS_DIR, NATIVE_DIR } from "./config.js";
 import { fileBusStatus, listFileBus, transferFile } from "./file-bus.js";
@@ -290,6 +291,9 @@ async function startTurn(botId, text) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
+            const localMcp = await discoverLocalMcp(cfg);
+            if (localMcp.length)
+                integrations.localMcp = localMcp;
             integrations.fileBus = { url: `http://127.0.0.1:${PORT}`, botId: bot.id };
             const wants = bot.computer; // cloud/local/wsl/hyperv/qemu/oracle/off/undefined(auto)
             if (isShellBackend(wants)) {
@@ -343,6 +347,9 @@ async function startTurn(botId, text) {
                                 ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
                                 : "",
                     "The OpenMausBot File Bus is available to every bot. Use file_transfer to move files between host, current backend, WSL2, Hyper-V, QEMU, Oracle SSH, and future adapters. Host paths are relative to the configured File Bus root; do not place credentials or tokens in transfer paths or command output.",
+                    integrations.localMcp?.length
+                        ? `Local MCP plugins attached for this turn: ${integrations.localMcp.map((server) => server.name).join(", ")}. Use their tools when the user asks about those connected services.`
+                        : "No local MCP plugin is reachable for this turn.",
                 ]
                     .filter(Boolean)
                     .join("\n\n"),
