@@ -86,8 +86,15 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 /** A reachable local or remote MCP endpoint that a provider can attach to a turn. */
 export interface McpServerEndpoint {
   name: string;
-  url: string;
+  /** Streamable HTTP/SSE endpoint. */
+  url?: string;
   headers?: Record<string, string>;
+  /** Optional local stdio transport for MCPs such as ReVa headless or the GhidraMCP bridge. */
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** Optional project-kind filter used by OMB's project workbench. */
+  projectKinds?: string[];
 }
 
 // ── adapter contract (upstream ProviderAdapterShape, promise-flavored) ──

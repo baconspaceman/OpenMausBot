@@ -211,11 +211,9 @@ export const ClaudeDriver = {
             const mcpServers = {};
             const allowed = [];
             for (const server of turn.integrations?.localMcp ?? []) {
-                mcpServers[server.name] = {
-                    type: "http",
-                    url: server.url,
-                    ...(server.headers ? { headers: server.headers } : {}),
-                };
+                mcpServers[server.name] = server.command
+                    ? { command: server.command, args: server.args ?? [], ...(server.env ? { env: server.env } : {}) }
+                    : { type: "http", url: server.url, ...(server.headers ? { headers: server.headers } : {}) };
                 allowed.push(`mcp__${server.name}`);
             }
             if (turn.integrations?.composio?.key) {

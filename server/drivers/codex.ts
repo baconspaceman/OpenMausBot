@@ -76,11 +76,9 @@ function computerMcpConfig(turn: SendTurnInput) {
   const composio = turn.integrations?.composio;
   const mcp_servers: Record<string, unknown> = {};
   for (const server of turn.integrations?.localMcp ?? []) {
-    mcp_servers[server.name] = {
-      type: "streamable_http",
-      url: server.url,
-      ...(server.headers ? { http_headers: server.headers } : {}),
-    };
+    mcp_servers[server.name] = server.command
+      ? { command: server.command, args: server.args ?? [], ...(server.env ? { env: server.env } : {}) }
+      : { type: "streamable_http", url: server.url, ...(server.headers ? { http_headers: server.headers } : {}) };
   }
   if (composio?.key) {
     // Codex's app-server uses the same remote MCP fields as its CLI config:

@@ -34,7 +34,15 @@ export interface AppConfig {
   };
   /** Optional local MCP endpoints. The Discord bridge has a safe localhost default. */
   localMcp?: {
-    servers?: Record<string, { url?: string; enabled?: boolean; headers?: Record<string, string> }>;
+    servers?: Record<string, {
+      url?: string;
+      enabled?: boolean;
+      headers?: Record<string, string>;
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      projectKinds?: string[];
+    }>;
   };
   instances?: InstanceConfigMap;
 }

@@ -1,13 +1,13 @@
 // OpenMausBot server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
-import { readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, join } from "node:path";
 import * as box from "./box.js";
 import * as composio from "./composio.js";
-import { discoverLocalMcp } from "./local-mcp.js";
+import { discoverLocalMcp, PROJECT_MCP_CATALOG } from "./local-mcp.js";
 import { completeDiscordOAuth, discordAccountStatus, getDiscordChannel, listDiscordChannels, listDiscordGuilds, listDiscordMessages, searchDiscordGuild, sendDiscordMessage, startDiscordOAuth, } from "./discord-account.js";
 import { inspectGitHubUrl } from "./github-research.js";
 import { backendConfig, backendConfigStatus, backendLabel, backendStatus, isShellBackend, provisionBackend, runBackendCommand, sleepBackend, stopManagedBackends, } from "./computer-backends.js";
@@ -17,6 +17,7 @@ import { BUILT_IN_DRIVERS } from "./drivers/builtIn.js";
 import { EventBus } from "./harness/bus.js";
 import { ProviderRegistry } from "./harness/registry.js";
 import { Store } from "./store.js";
+import { ProjectStore } from "./project-store.js";
 const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
 const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
 const MIME = {
@@ -53,6 +54,7 @@ async function defaultSelection() {
 }
 let bootSelection = { instanceId: "claude", model: "claude-sonnet-5" };
 const store = new Store(() => bootSelection);
+const projectStore = new ProjectStore();
 bootSelection = await defaultSelection();
 store.seedIfEmpty();
 let shutdownManagedComputersPromise = null;
@@ -283,6 +285,11 @@ async function startTurn(botId, text) {
     ]
         .filter(Boolean)
         .join(" ");
+    const projectContext = projectStore.contextForBot(bot.id);
+    const projectPrompt = projectStore.promptForBot(bot.id);
+    const projectCwd = projectContext.projects
+        .map((entry) => entry.project.rootPath)
+        .find((rootPath) => Boolean(rootPath && existsSync(rootPath)));
     // busy flips immediately so the composer locks; the dispatch itself runs
     // in the background — box provisioning can take ~90s and must never
     // hang the HTTP request
@@ -293,7 +300,10 @@ async function startTurn(botId, text) {
             const integrations = {};
             if (cfg.composio?.key)
                 integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
-            const localMcp = await discoverLocalMcp(cfg);
+            const projectKinds = projectContext.projects.map((entry) => entry.project.kind);
+            const projectMcpTools = new Set(projectContext.projects.flatMap((entry) => entry.project.mcpTools));
+            const discoveredMcp = await discoverLocalMcp(cfg, { projectKinds });
+            const localMcp = discoveredMcp.filter((server) => !server.projectKinds?.length || projectMcpTools.has(server.name));
             if (localMcp.length)
                 integrations.localMcp = localMcp;
             integrations.fileBus = {
@@ -333,6 +343,7 @@ async function startTurn(botId, text) {
                 model: bot.modelSelection.model,
                 resumeCursor: bot.resumeCursors[bot.modelSelection.instanceId],
                 transcript,
+                cwd: projectCwd,
                 system: [
                     persona,
                     agentContext
@@ -345,6 +356,7 @@ async function startTurn(botId, text) {
                             "END PRIVATE LOCAL CONTEXT",
                         ].join("\n")
                         : "",
+                    projectPrompt,
                     integrations.computer && "boxId" in integrations.computer && instance.driverKind !== "boxAgent"
                         ? "You have your own cloud computer — use the computer tools (screenshot, computer_exec, open_url) whenever browsing or acting on a desktop helps."
                         : integrations.computer && "backend" in integrations.computer
@@ -508,6 +520,7 @@ const server = createServer(async (req, res) => {
             await registry.get(bot.modelSelection.instanceId)?.adapter.interruptTurn(bot.threadId).catch(() => { });
             stopScreenPoller(bot.id);
             store.deleteBot(bot.id);
+            projectStore.pauseAssignmentsForBot(bot.id);
             for (const dir of [EVENTS_DIR, NATIVE_DIR]) {
                 try {
                     unlinkSync(join(dir, `${bot.threadId}.ndjson`));
@@ -516,6 +529,172 @@ const server = createServer(async (req, res) => {
             }
             broadcast({ kind: "bot.deleted", botId: bot.id });
             return json(res, 200, { ok: true });
+        }
+        // ── project workbench ──
+        if (method === "GET" && path === "/api/project-tools/catalog") {
+            const configured = cfg.localMcp?.servers ?? {};
+            return json(res, 200, {
+                tools: PROJECT_MCP_CATALOG.map((tool) => ({
+                    ...tool,
+                    configured: Boolean(configured[tool.name]),
+                    enabled: configured[tool.name]?.enabled !== false && Boolean(configured[tool.name]),
+                })),
+            });
+        }
+        if (method === "GET" && path === "/api/projects") {
+            const includeArchived = url.searchParams.get("includeArchived") === "true";
+            return json(res, 200, {
+                projects: projectStore.listProjects(includeArchived).map((project) => ({
+                    ...project,
+                    assignmentCount: projectStore.assignmentsForProject(project.id).filter((assignment) => assignment.status === "active").length,
+                    openWorkItemCount: projectStore.workItemsForProject(project.id).length,
+                })),
+            });
+        }
+        if (method === "POST" && path === "/api/projects") {
+            const body = await readBody(req);
+            const project = projectStore.createProject({
+                name: body.name,
+                kind: body.kind,
+                description: body.description,
+                rootPath: body.rootPath,
+                repositoryUrl: body.repositoryUrl,
+                tags: body.tags,
+                mcpTools: body.mcpTools,
+            });
+            broadcast({ kind: "project", project });
+            return json(res, 201, { project });
+        }
+        if (method === "GET" && path === "/api/projects/context") {
+            const botId = String(url.searchParams.get("bot_id") ?? "").trim();
+            if (!botId)
+                return json(res, 400, { error: "bot_id required" });
+            if (!store.bot(botId))
+                return json(res, 404, { error: "no such bot" });
+            return json(res, 200, projectStore.contextForBot(botId));
+        }
+        m = path.match(/^\/api\/projects\/([^/]+)$/);
+        if (m && method === "GET") {
+            const context = projectStore.contextForProject(decodeURIComponent(m[1]));
+            if (!context)
+                return json(res, 404, { error: "no such project" });
+            return json(res, 200, context);
+        }
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const project = projectStore.patchProject(decodeURIComponent(m[1]), {
+                ...(body.name !== undefined ? { name: body.name } : {}),
+                ...(body.description !== undefined ? { description: body.description } : {}),
+                ...(body.rootPath !== undefined ? { rootPath: body.rootPath } : {}),
+                ...(body.repositoryUrl !== undefined ? { repositoryUrl: body.repositoryUrl } : {}),
+                ...(body.tags !== undefined ? { tags: body.tags } : {}),
+                ...(body.mcpTools !== undefined ? { mcpTools: body.mcpTools } : {}),
+                ...(body.status !== undefined ? { status: body.status } : {}),
+            });
+            if (!project)
+                return json(res, 404, { error: "no such project" });
+            broadcast({ kind: "project", project });
+            return json(res, 200, { project });
+        }
+        m = path.match(/^\/api\/projects\/([^/]+)\/assignments$/);
+        if (m && method === "GET") {
+            const project = projectStore.project(decodeURIComponent(m[1]));
+            if (!project)
+                return json(res, 404, { error: "no such project" });
+            return json(res, 200, { assignments: projectStore.assignmentsForProject(project.id) });
+        }
+        if (m && method === "POST") {
+            const project = projectStore.project(decodeURIComponent(m[1]));
+            if (!project)
+                return json(res, 404, { error: "no such project" });
+            const body = await readBody(req);
+            if (!store.bot(String(body.botId ?? "")))
+                return json(res, 404, { error: "no such bot" });
+            const assignment = projectStore.assignBot({
+                projectId: project.id,
+                botId: String(body.botId),
+                laneId: String(body.laneId ?? ""),
+                roleName: body.roleName,
+                instructions: body.instructions,
+            });
+            broadcast({ kind: "project.assignment", assignment });
+            return json(res, 201, { assignment });
+        }
+        m = path.match(/^\/api\/project-assignments\/([^/]+)$/);
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const assignment = projectStore.patchAssignment(m[1], {
+                ...(body.roleName !== undefined ? { roleName: String(body.roleName) } : {}),
+                ...(body.instructions !== undefined ? { instructions: String(body.instructions) } : {}),
+                ...(body.status !== undefined ? { status: body.status } : {}),
+            });
+            if (!assignment)
+                return json(res, 404, { error: "no such assignment" });
+            broadcast({ kind: "project.assignment", assignment });
+            return json(res, 200, { assignment });
+        }
+        m = path.match(/^\/api\/projects\/([^/]+)\/work-items$/);
+        if (m && method === "GET") {
+            const project = projectStore.project(decodeURIComponent(m[1]));
+            if (!project)
+                return json(res, 404, { error: "no such project" });
+            const botId = String(url.searchParams.get("bot_id") ?? "").trim();
+            if (botId && !projectStore.assignmentsForBot(botId).some((assignment) => assignment.projectId === project.id)) {
+                return json(res, 403, { error: "bot is not assigned to this project" });
+            }
+            return json(res, 200, { workItems: projectStore.workItemsForProject(project.id, url.searchParams.get("includeDone") === "true") });
+        }
+        if (m && method === "POST") {
+            const project = projectStore.project(decodeURIComponent(m[1]));
+            if (!project)
+                return json(res, 404, { error: "no such project" });
+            const body = await readBody(req);
+            const botId = String(body.botId ?? "").trim();
+            if (botId && !projectStore.assignmentsForBot(botId).some((assignment) => assignment.projectId === project.id)) {
+                return json(res, 403, { error: "bot is not assigned to this project" });
+            }
+            const workItem = projectStore.createWorkItem({
+                projectId: project.id,
+                laneId: body.laneId,
+                kind: body.kind,
+                title: body.title,
+                description: body.description,
+                status: body.status,
+                priority: body.priority,
+                labels: body.labels,
+                assigneeBotId: body.assigneeBotId,
+                assigneeRole: body.assigneeRole,
+                evidence: body.evidence,
+            });
+            broadcast({ kind: "project.work-item", workItem });
+            return json(res, 201, { workItem });
+        }
+        m = path.match(/^\/api\/project-work-items\/([^/]+)$/);
+        if (m && method === "PATCH") {
+            const body = await readBody(req);
+            const existingItem = projectStore.workItem(m[1]);
+            if (!existingItem)
+                return json(res, 404, { error: "no such work item" });
+            const botId = String(body.botId ?? "").trim();
+            if (botId && !projectStore.assignmentsForBot(botId).some((assignment) => assignment.projectId === existingItem.projectId)) {
+                return json(res, 403, { error: "bot is not assigned to this project" });
+            }
+            const workItem = projectStore.patchWorkItem(m[1], {
+                ...(body.laneId !== undefined ? { laneId: body.laneId } : {}),
+                ...(body.kind !== undefined ? { kind: body.kind } : {}),
+                ...(body.title !== undefined ? { title: body.title } : {}),
+                ...(body.description !== undefined ? { description: body.description } : {}),
+                ...(body.status !== undefined ? { status: body.status } : {}),
+                ...(body.priority !== undefined ? { priority: body.priority } : {}),
+                ...(body.labels !== undefined ? { labels: body.labels } : {}),
+                ...(body.assigneeBotId !== undefined ? { assigneeBotId: body.assigneeBotId } : {}),
+                ...(body.assigneeRole !== undefined ? { assigneeRole: body.assigneeRole } : {}),
+                ...(body.evidence !== undefined ? { evidence: body.evidence } : {}),
+            });
+            if (!workItem)
+                return json(res, 404, { error: "no such work item" });
+            broadcast({ kind: "project.work-item", workItem });
+            return json(res, 200, { workItem });
         }
         // onboarding/ask cards persist their answered/dismissed state
         m = path.match(/^\/api\/bots\/([\w-]+)\/cards\/([\w-]+)$/);
@@ -590,7 +769,7 @@ const server = createServer(async (req, res) => {
         if ((method === "PUT" || method === "PATCH") && path === "/api/config") {
             const body = await readBody(req);
             const patch = {};
-            for (const key of ["xai", "composio", "box", "computer", "fileBus"]) {
+            for (const key of ["xai", "composio", "box", "computer", "fileBus", "localMcp"]) {
                 if (body[key] && typeof body[key] === "object")
                     patch[key] = body[key];
             }

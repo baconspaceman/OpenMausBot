@@ -212,6 +212,57 @@ const GITHUB_TOOLS = [
         inputSchema: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
     },
 ];
+const PROJECT_TOOLS = [
+    {
+        name: "project_get_context",
+        description: "Read the OpenMausBot project workbench context assigned to this bot: project identity, lane/role, open work items, and durable project scope. Read-only.",
+        inputSchema: { type: "object", properties: {} },
+    },
+    {
+        name: "project_list_work_items",
+        description: "List tracked open work items for an assigned OMB project. Use this to coordinate bugs, QA, research, Discord conversations, and release work without mixing projects.",
+        inputSchema: {
+            type: "object",
+            properties: { project_id: { type: "string" }, include_done: { type: "boolean" } },
+            required: ["project_id"],
+        },
+    },
+    {
+        name: "project_create_work_item",
+        description: "Create a local OpenMausBot project work item only when the owner asks you to track it. Use evidence references for Discord threads/messages, GitHub links, tests, files, or URLs. This does not change Discord or GitHub.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                project_id: { type: "string" },
+                lane_id: { type: "string" },
+                kind: { type: "string", enum: ["task", "bug", "qa", "research", "conversation", "release"] },
+                title: { type: "string" },
+                description: { type: "string" },
+                priority: { type: "string", enum: ["low", "normal", "high", "critical"] },
+                labels: { type: "array", items: { type: "string" } },
+                evidence: { type: "array", items: { type: "object" } },
+            },
+            required: ["project_id", "title"],
+        },
+    },
+    {
+        name: "project_update_work_item",
+        description: "Update a local OMB project work item when the owner asks you to record progress, status, priority, assignment, or evidence. This does not change Discord or GitHub.",
+        inputSchema: {
+            type: "object",
+            properties: {
+                work_item_id: { type: "string" },
+                title: { type: "string" },
+                description: { type: "string" },
+                status: { type: "string", enum: ["backlog", "in-progress", "blocked", "done", "wont-do"] },
+                priority: { type: "string", enum: ["low", "normal", "high", "critical"] },
+                labels: { type: "array", items: { type: "string" } },
+                evidence: { type: "array", items: { type: "object" } },
+            },
+            required: ["work_item_id"],
+        },
+    },
+];
 async function fileBusRequest(path, init) {
     if (!fileBusUrl)
         throw new Error("OpenMausBot File Bus is not attached to this turn");
@@ -259,6 +310,11 @@ async function researchRequest(path) {
     if (!res.ok)
         throw new Error(body?.error || `Research request failed (${res.status})`);
     return body;
+}
+async function projectRequest(path, init) {
+    if (!fileBusUrl || !fileBusBotId)
+        throw new Error("OMB project tools are not attached to this turn");
+    return fileBusRequest(path, init);
 }
 async function call(id, name, args) {
     if (name === "discord_account_list_guilds") {
@@ -326,6 +382,69 @@ async function call(id, name, args) {
         }
         catch (error) {
             return text(id, `GitHub inspection failed: ${error.message}`, true);
+        }
+    }
+    if (name === "project_get_context") {
+        try {
+            const body = await projectRequest(`/api/projects/context?bot_id=${encodeURIComponent(fileBusBotId)}`);
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `Project workbench failed: ${error.message}`, true);
+        }
+    }
+    if (name === "project_list_work_items") {
+        try {
+            const projectId = encodeURIComponent(String(args.project_id ?? ""));
+            const includeDone = args.include_done === true ? "true" : "false";
+            const body = await projectRequest(`/api/projects/${projectId}/work-items?includeDone=${includeDone}&bot_id=${encodeURIComponent(fileBusBotId)}`);
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `Project workbench failed: ${error.message}`, true);
+        }
+    }
+    if (name === "project_create_work_item") {
+        try {
+            const projectId = encodeURIComponent(String(args.project_id ?? ""));
+            const body = await projectRequest(`/api/projects/${projectId}/work-items`, {
+                method: "POST",
+                body: JSON.stringify({
+                    botId: fileBusBotId,
+                    laneId: args.lane_id,
+                    kind: args.kind,
+                    title: args.title,
+                    description: args.description,
+                    priority: args.priority,
+                    labels: args.labels,
+                    evidence: args.evidence,
+                }),
+            });
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `Project workbench failed: ${error.message}`, true);
+        }
+    }
+    if (name === "project_update_work_item") {
+        try {
+            const workItemId = encodeURIComponent(String(args.work_item_id ?? ""));
+            const body = await projectRequest(`/api/project-work-items/${workItemId}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    botId: fileBusBotId,
+                    ...(args.title !== undefined ? { title: args.title } : {}),
+                    ...(args.description !== undefined ? { description: args.description } : {}),
+                    ...(args.status !== undefined ? { status: args.status } : {}),
+                    ...(args.priority !== undefined ? { priority: args.priority } : {}),
+                    ...(args.labels !== undefined ? { labels: args.labels } : {}),
+                    ...(args.evidence !== undefined ? { evidence: args.evidence } : {}),
+                }),
+            });
+            return text(id, JSON.stringify(body, null, 2));
+        }
+        catch (error) {
+            return text(id, `Project workbench failed: ${error.message}`, true);
         }
     }
     if (name === "file_transfer") {
@@ -456,7 +575,7 @@ async function handle(msg) {
     if (msg.method === "tools/list") {
         const computerTools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
         const tools = fileBusUrl
-            ? [...computerTools, ...FILE_TOOLS, ...(discordAccountEnabled ? DISCORD_ACCOUNT_TOOLS : []), ...GITHUB_TOOLS]
+            ? [...computerTools, ...FILE_TOOLS, ...(discordAccountEnabled ? DISCORD_ACCOUNT_TOOLS : []), ...GITHUB_TOOLS, ...PROJECT_TOOLS]
             : computerTools;
         return send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
     }

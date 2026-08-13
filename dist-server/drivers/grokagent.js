@@ -61,12 +61,19 @@ const LOAD_SESSION_TIMEOUT = 120_000; // history replay on a long thread is slow
 function acpMcpServers(turn) {
     const servers = [];
     for (const server of turn.integrations?.localMcp ?? []) {
-        servers.push({
-            type: "http",
-            name: server.name,
-            url: server.url,
-            headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
-        });
+        servers.push(server.command
+            ? {
+                name: server.name,
+                command: server.command,
+                args: server.args ?? [],
+                env: Object.entries(server.env ?? {}).map(([name, value]) => ({ name, value })),
+            }
+            : {
+                type: "http",
+                name: server.name,
+                url: server.url,
+                headers: Object.entries(server.headers ?? {}).map(([name, value]) => ({ name, value })),
+            });
     }
     const composio = turn.integrations?.composio;
     if (composio?.key) {

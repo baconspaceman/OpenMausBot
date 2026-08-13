@@ -120,6 +120,44 @@ describe("harness HTTP API", () => {
     expect(after.body.bots.find((b: { id: string }) => b.id === bot.id)).toBeUndefined();
   });
 
+  it("creates a project, assigns a bot lane, and tracks evidence-backed work", async () => {
+    const { body: bots } = await api("GET", "/api/bots");
+    const bot = bots.bots[0];
+    const created = await api("POST", "/api/projects", {
+      name: "AP QA Lab",
+      kind: "archipelago-world",
+      description: "World development and community QA.",
+      tags: ["archipelago", "qa"],
+    });
+    expect(created.status).toBe(201);
+    const project = created.body.project;
+    expect(project.lanes.some((lane: { id: string }) => lane.id === "qa")).toBe(true);
+
+    const assigned = await api("POST", `/api/projects/${project.id}/assignments`, {
+      botId: bot.id,
+      laneId: "qa",
+      roleName: "QA lead",
+    });
+    expect(assigned.status).toBe(201);
+
+    const work = await api("POST", `/api/projects/${project.id}/work-items`, {
+      botId: bot.id,
+      laneId: "qa",
+      kind: "bug",
+      title: "Generation check needs a regression test",
+      evidence: [{ kind: "discord-thread", ref: "https://discord.com/channels/1/2" }],
+    });
+    expect(work.status).toBe(201);
+
+    const context = await api("GET", `/api/projects/context?bot_id=${encodeURIComponent(bot.id)}`);
+    expect(context.status).toBe(200);
+    expect(context.body.projects[0]).toMatchObject({
+      project: { id: project.id },
+      assignments: [{ botId: bot.id, laneId: "qa" }],
+      activeWorkItems: [{ title: "Generation check needs a regression test" }],
+    });
+  });
+
   it("persists an answered onboarding card", async () => {
     const { body } = await api("GET", "/api/bots");
     const bot = body.bots[0];
