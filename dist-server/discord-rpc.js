@@ -9,7 +9,11 @@ const RPC_PIPE_PREFIX = "\\\\?\\pipe\\discord-ipc-";
 const HANDSHAKE = 0;
 const FRAME = 1;
 const CLOSE = 2;
-const REQUEST_TIMEOUT_MS = 15_000;
+const PIPE_CONNECT_TIMEOUT_MS = 1_500;
+const HANDSHAKE_TIMEOUT_MS = 5_000;
+const REQUEST_TIMEOUT_MS = 8_000;
+const OPERATION_TIMEOUT_MS = 12_000;
+const MAX_PIPE_INDEX = 4;
 export class DiscordRpcError extends Error {
     status = 403;
 }
@@ -102,20 +106,30 @@ class DiscordRpcClient {
     openPipe(index) {
         return new Promise((resolve, reject) => {
             const socket = createConnection(`${RPC_PIPE_PREFIX}${index}`);
+            const cleanup = () => {
+                socket.off("error", onError);
+                socket.off("connect", onConnect);
+                socket.off("timeout", onTimeout);
+            };
             const onError = (error) => {
+                cleanup();
                 socket.destroy();
                 reject(error);
             };
-            socket.once("error", onError);
-            socket.once("connect", () => {
-                socket.off("error", onError);
+            const onTimeout = () => onError(new DiscordRpcError(`Discord RPC pipe ${index} did not connect in time.`));
+            const onConnect = () => {
+                cleanup();
+                socket.setTimeout(0);
                 resolve(socket);
-            });
+            };
+            socket.once("error", onError);
+            socket.once("connect", onConnect);
+            socket.setTimeout(PIPE_CONNECT_TIMEOUT_MS, onTimeout);
         });
     }
     async connect() {
         let lastError;
-        for (let index = 0; index < 10; index += 1) {
+        for (let index = 0; index < MAX_PIPE_INDEX; index += 1) {
             try {
                 this.socket = await this.openPipe(index);
                 break;
@@ -135,8 +149,18 @@ class DiscordRpcClient {
             this.readyResolve = resolve;
             this.readyReject = reject;
         });
-        this.send(HANDSHAKE, { v: 1, client_id: this.clientId });
-        await ready;
+        const handshakeTimer = setTimeout(() => {
+            this.readyReject?.(new DiscordRpcError("Discord RPC handshake timed out."));
+        }, HANDSHAKE_TIMEOUT_MS);
+        try {
+            this.send(HANDSHAKE, { v: 1, client_id: this.clientId });
+            await ready;
+        }
+        finally {
+            clearTimeout(handshakeTimer);
+            this.readyResolve = null;
+            this.readyReject = null;
+        }
         await this.request("AUTHENTICATE", { access_token: this.accessToken });
     }
     request(cmd, args) {
@@ -147,7 +171,14 @@ class DiscordRpcClient {
                 reject(new DiscordRpcError(`Discord RPC timed out while running ${cmd}.`));
             }, REQUEST_TIMEOUT_MS);
             this.pending.set(nonce, { resolve, reject, timer });
-            this.send(FRAME, { cmd, args, nonce });
+            try {
+                this.send(FRAME, { cmd, args, nonce });
+            }
+            catch (error) {
+                clearTimeout(timer);
+                this.pending.delete(nonce);
+                reject(error instanceof Error ? error : new Error(String(error)));
+            }
         });
     }
     close() {
@@ -169,11 +200,20 @@ function rpcCredentials(cfg) {
 async function withRpc(cfg, fn) {
     const credentials = rpcCredentials(cfg);
     const client = new DiscordRpcClient(credentials.clientId, credentials.accessToken);
+    let operationTimer;
     try {
-        await client.connect();
-        return await fn(client);
+        const operation = (async () => {
+            await client.connect();
+            return fn(client);
+        })();
+        const timeout = new Promise((_, reject) => {
+            operationTimer = setTimeout(() => reject(new DiscordRpcError("Discord local RPC did not respond in time; do not retry this lookup in the same turn.")), OPERATION_TIMEOUT_MS);
+        });
+        return await Promise.race([operation, timeout]);
     }
     finally {
+        if (operationTimer)
+            clearTimeout(operationTimer);
         client.close();
     }
 }

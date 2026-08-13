@@ -22,6 +22,7 @@ const shellBackend = isShellBackend(process.env.OGB_COMPUTER_BACKEND)
 const fileBusUrl = (process.env.OGB_FILE_BUS_URL ?? "").replace(/\/$/, "");
 const fileBusBotId = process.env.OGB_FILE_BUS_BOT_ID ?? "";
 const discordAccountEnabled = process.env.OGB_DISCORD_ACCOUNT_ENABLED === "1";
+let discordRpcCooldownUntil = 0;
 let shellConfig: Record<string, unknown> = {};
 try {
   shellConfig = JSON.parse(process.env.OGB_COMPUTER_CONFIG ?? "{}");
@@ -192,19 +193,19 @@ const DISCORD_ACCOUNT_TOOLS = [
   {
     name: "discord_account_list_channels",
     description:
-      "List channels in one Discord guild through the owner's account. Only channels the account can access should be treated as readable.",
+      "List channels in one Discord guild through the owner's account. Only channels the account can access should be treated as readable. If the local RPC times out, do not retry automatically in the same turn.",
     inputSchema: { type: "object", properties: { guild_id: { type: "string" } }, required: ["guild_id"] },
   },
   {
     name: "discord_account_get_channel",
     description:
-      "Open a Discord text-channel or thread directly by its channel/thread ID through the owner's local Discord client, returning its metadata and recent messages.",
+      "Open a Discord text-channel or thread directly by its channel/thread ID through the owner's local Discord client, returning its metadata and recent messages. If this tool times out, do not retry it in the same turn; report that the local Discord RPC did not answer.",
     inputSchema: { type: "object", properties: { channel_id: { type: "string" } }, required: ["channel_id"] },
   },
   {
     name: "discord_account_read_messages",
     description:
-      "Read recent messages from a Discord text channel or thread by its channel/thread ID through the owner's account. Use only for the user's stated research task; never infer access to private channels.",
+      "Read recent messages from a Discord text channel or thread by its channel/thread ID through the owner's account. Use only for the user's stated research task; never infer access to private channels. If this tool times out, do not retry it in the same turn; report the limitation.",
     inputSchema: {
       type: "object",
       properties: {
@@ -219,7 +220,7 @@ const DISCORD_ACCOUNT_TOOLS = [
   {
     name: "discord_account_search_guild",
     description:
-      "Search readable messages in one Discord guild through the owner's account. Search is read-only and must be tied to the user's research question.",
+      "Search readable messages in one Discord guild through the owner's account. Search is read-only and must be tied to the user's research question. If the local RPC times out, do not retry automatically in the same turn.",
     inputSchema: {
       type: "object",
       properties: { guild_id: { type: "string" }, content: { type: "string" }, limit: { type: "number" } },
@@ -251,10 +252,27 @@ async function fileBusRequest(path: string, init?: RequestInit) {
 
 async function accountRequest(path: string) {
   if (!fileBusUrl || !discordAccountEnabled) throw new Error("Discord Account Research is not connected in OpenMausBot");
-  const res = await fetch(`${fileBusUrl}${path}`, { signal: AbortSignal.timeout(30_000) });
-  const body: any = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(body?.error || `Discord Account Research request failed (${res.status})`);
-  return body;
+  const isRpcLookup = path.includes("/channels") || path.includes("/search");
+  if (isRpcLookup && Date.now() < discordRpcCooldownUntil) {
+    throw new Error("The local Discord RPC recently timed out; do not retry channel/thread research in this turn. Check that Discord is open and use a fresh turn.");
+  }
+  try {
+    const res = await fetch(`${fileBusUrl}${path}`, { signal: AbortSignal.timeout(30_000) });
+    const body: any = await res.json().catch(() => null);
+    const message = body?.error || `Discord Account Research request failed (${res.status})`;
+    if (!res.ok) {
+      if (isRpcLookup && /timed out|did not respond|handshake|local RPC/i.test(String(message))) {
+        discordRpcCooldownUntil = Date.now() + 60_000;
+      }
+      throw new Error(message);
+    }
+    return body;
+  } catch (error) {
+    if (isRpcLookup && error instanceof DOMException && error.name === "TimeoutError") {
+      discordRpcCooldownUntil = Date.now() + 60_000;
+    }
+    throw error;
+  }
 }
 
 async function researchRequest(path: string) {
