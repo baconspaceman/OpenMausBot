@@ -3,8 +3,7 @@ import { Loader2 } from "lucide-react";
 import { StoreProvider, useStore } from "@/state/store";
 import { Onboarding } from "@/components/Onboarding";
 import { emailGateDone, initAnalytics } from "@/lib/analytics";
-import { Sidebar } from "@/components/Sidebar";
-import { ChatView } from "@/components/ChatView";
+import { BaconStationWorkspace } from "@/components/BaconStationWorkspace";
 import { SettingsPanel } from "@/components/SettingsPanel";
 import { PluginsPanel } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
@@ -15,9 +14,8 @@ function Shell() {
   const bot = state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0];
   return (
     <div className="relative flex h-full">
-      <Sidebar />
       {bot ? (
-        <ChatView bot={bot} />
+        <BaconStationWorkspace bot={bot} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />

@@ -21,6 +21,18 @@
   --color-danger: #ff5667;
   --color-warning: #ff9800;
 
+  /* Bacon Station: soot, iron, ember, and oxidized copper. */
+  --color-forge-app: #0a0a09;
+  --color-forge-panel: #111110;
+  --color-forge-inset: #0d0d0c;
+  --color-forge-raised: #24211f;
+  --color-forge-raised-hover: #302a27;
+  --color-forge-line: #3a302b;
+  --color-forge-red: #d4553d;
+  --color-forge-copper: #d28a5a;
+  --color-forge-gold: #c8a35c;
+  --color-forge-teal: #6ba79b;
+
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
     "Segoe UI", system-ui, sans-serif;
 
