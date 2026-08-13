@@ -76,16 +76,22 @@ export function startDiscordOAuth(cfg, port = 8799) {
 async function readJson(res) {
     return res.json().catch(() => ({}));
 }
-async function tokenExchange(body) {
+async function tokenExchange(body, clientId, clientSecret) {
+    // Discord documents HTTP Basic authentication for OAuth token requests.
+    // Keep client credentials out of the form body and never include this
+    // header or the response body in OMB/provider logs.
+    const authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`, "utf8").toString("base64")}`;
     const res = await fetch(TOKEN_URL, {
         method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
+        headers: { authorization, "content-type": "application/x-www-form-urlencoded" },
         body,
         signal: AbortSignal.timeout(30_000),
     });
     const data = await readJson(res);
     if (!res.ok || typeof data.access_token !== "string") {
-        throw new DiscordAccountError(`Discord OAuth token exchange failed (${res.status}).`, res.status || 502);
+        const code = typeof data?.error === "string" ? ` ${data.error}` : "";
+        const description = typeof data?.error_description === "string" ? `: ${data.error_description}` : "";
+        throw new DiscordAccountError(`Discord OAuth token exchange failed (${res.status})${code}${description}.`, res.status || 502);
     }
     return data;
 }
@@ -102,12 +108,10 @@ export async function completeDiscordOAuth(cfg, code, state, port = 8799) {
     if (callback !== pending.redirectUri)
         throw new DiscordAccountError("Discord redirect URI changed during sign-in.", 403);
     const token = await tokenExchange(new URLSearchParams({
-        client_id: current.clientId,
-        client_secret: current.clientSecret,
         grant_type: "authorization_code",
         code,
         redirect_uri: callback,
-    }));
+    }), current.clientId, current.clientSecret);
     const user = await fetchDiscord(cfg, "/users/@me", undefined, {
         accessToken: token.access_token,
         expiresAt: Date.now() + Number(token.expires_in ?? 604_800) * 1000,
@@ -132,11 +136,9 @@ async function refreshAccessToken(cfg, writer) {
         throw new DiscordAccountError("Discord Account Research is not connected. Connect it from Plugins.", 401);
     }
     const token = await tokenExchange(new URLSearchParams({
-        client_id: current.clientId,
-        client_secret: current.clientSecret,
         grant_type: "refresh_token",
         refresh_token: current.refreshToken,
-    }));
+    }), current.clientId, current.clientSecret);
     const patch = {
         discordAccount: {
             accessToken: token.access_token,
