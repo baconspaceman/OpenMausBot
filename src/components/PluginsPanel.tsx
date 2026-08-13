@@ -145,10 +145,10 @@ export function PluginsPanel() {
       onClick={() => dispatch({ type: "togglePlugins", open: false })}
     >
       <div
-        className="animate-pop-in flex max-h-[80%] w-[560px] flex-col rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
+        className="animate-pop-in flex h-[90vh] max-h-[calc(100vh-2rem)] min-h-0 w-[560px] flex-col rounded-2xl border border-hairline/50 bg-panel p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between">
           <div>
             <div className="text-[17px] font-semibold text-ink">Connected apps</div>
             <div className="mt-0.5 text-[11px] text-ink-secondary">
@@ -171,111 +171,113 @@ export function PluginsPanel() {
             </button>
           </div>
         </div>
-        <div className="mt-1 text-[13px] text-ink-secondary">
-          Apps your bots can use through Composio Connect. Connecting an app opens its sign-in page in your browser.
-        </div>
-
-        <div className="mt-3 flex gap-2 rounded-lg border border-hairline/40 bg-inset/50 px-3 py-2.5 text-[12px] leading-4 text-ink-secondary">
-          <Info size={15} className="mt-0.5 shrink-0 text-accent" />
-          <div>
-            <span className="font-medium text-ink">Two extension routes:</span> this list is for Composio connected apps. Local MCP plugins—such as a locally running Discord bridge—are separate and are not discovered here yet.
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          <div className="mt-1 text-[13px] text-ink-secondary">
+            Apps your bots can use through Composio Connect. Connecting an app opens its sign-in page in your browser.
           </div>
-        </div>
 
-        <div className="mt-3">
-          <DiscordAccountPanel />
-        </div>
-
-        {configured === false && (
-          <div className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
-            No Composio Connect key yet —{" "}
-            <button
-              className="underline"
-              onClick={() => {
-                dispatch({ type: "togglePlugins", open: false });
-                dispatch({ type: "toggleAppSettings", open: true });
-              }}
-            >
-              add one in App Settings
-            </button>{" "}
-            to connect apps.
-          </div>
-        )}
-        {configured && source === "curated" && (
-          <div className="mt-3 text-[12px] text-ink-secondary">
-            Showing a curated set.{" "}
-            <button
-              className="underline hover:text-ink"
-              onClick={() => {
-                dispatch({ type: "togglePlugins", open: false });
-                dispatch({ type: "toggleAppSettings", open: true });
-              }}
-            >
-              Add a Composio API key
-            </button>{" "}
-            to browse the full catalog.
-          </div>
-        )}
-        {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
-        {statusError && <div className="mt-2 text-[12px] text-danger">Connection status unavailable: {statusError}</div>}
-
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search apps"
-          className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
-        />
-
-        <div className="mt-3 min-h-0 flex-1 overflow-y-auto rounded-xl border border-hairline/40">
-          {cards === null ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-ink-secondary">
-              <Loader2 size={14} className="animate-spin" /> Loading catalog…
+          <div className="mt-3 flex gap-2 rounded-lg border border-hairline/40 bg-inset/50 px-3 py-2.5 text-[12px] leading-4 text-ink-secondary">
+            <Info size={15} className="mt-0.5 shrink-0 text-accent" />
+            <div>
+              <span className="font-medium text-ink">Two extension routes:</span> this list is for Composio connected apps. Local MCP plugins—such as a locally running Discord bridge—are separate and are not discovered here yet.
             </div>
-          ) : (
-            visible.map((card, i) => {
-              const connected = status[card.slug]?.connected;
-              const busy = busySlug === card.slug;
-              return (
-                <div
-                  key={card.slug}
-                  className={cn(
-                    "flex items-center gap-3 bg-card px-4 py-3",
-                    i > 0 && "border-t border-hairline/40",
-                  )}
-                >
-                  <ServiceIcon card={card} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
-                      {card.label}
-                      {connected && <span className="size-1.5 rounded-full bg-success" />}
-                    </div>
-                    <div className="truncate text-[12px] text-ink-secondary">{card.blurb}</div>
-                  </div>
-                  <button
-                    disabled={configured !== true || busy}
-                    onClick={() => (connected ? disconnect(card.slug) : connect(card.slug))}
+          </div>
+
+          <div className="mt-3">
+            <DiscordAccountPanel />
+          </div>
+
+          {configured === false && (
+            <div className="mt-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2 text-[13px] text-warning">
+              No Composio Connect key yet —{" "}
+              <button
+                className="underline"
+                onClick={() => {
+                  dispatch({ type: "togglePlugins", open: false });
+                  dispatch({ type: "toggleAppSettings", open: true });
+                }}
+              >
+                add one in App Settings
+              </button>{" "}
+              to connect apps.
+            </div>
+          )}
+          {configured && source === "curated" && (
+            <div className="mt-3 text-[12px] text-ink-secondary">
+              Showing a curated set.{" "}
+              <button
+                className="underline hover:text-ink"
+                onClick={() => {
+                  dispatch({ type: "togglePlugins", open: false });
+                  dispatch({ type: "toggleAppSettings", open: true });
+                }}
+              >
+                Add a Composio API key
+              </button>{" "}
+              to browse the full catalog.
+            </div>
+          )}
+          {error && <div className="mt-2 text-[12px] text-danger">{error}</div>}
+          {statusError && <div className="mt-2 text-[12px] text-danger">Connection status unavailable: {statusError}</div>}
+
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search apps"
+            className="mt-3 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+          />
+
+          <div className="mt-3 max-h-[28rem] overflow-y-auto rounded-xl border border-hairline/40">
+            {cards === null ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-ink-secondary">
+                <Loader2 size={14} className="animate-spin" /> Loading catalog…
+              </div>
+            ) : (
+              visible.map((card, i) => {
+                const connected = status[card.slug]?.connected;
+                const busy = busySlug === card.slug;
+                return (
+                  <div
+                    key={card.slug}
                     className={cn(
-                      "w-[92px] rounded-lg py-1.5 text-[13px] disabled:opacity-50",
-                      connected
-                        ? "bg-raised text-ink-secondary hover:text-danger"
-                        : "bg-raised text-ink hover:bg-raised-hover",
+                      "flex items-center gap-3 bg-card px-4 py-3",
+                      i > 0 && "border-t border-hairline/40",
                     )}
                   >
-                    {busy ? (
-                      <Loader2 size={13} className="mx-auto animate-spin" />
-                    ) : connected ? (
-                      "Disconnect"
-                    ) : (
-                      "Connect"
-                    )}
-                  </button>
-                </div>
-              );
-            })
-          )}
-          {cards !== null && visible.length === 0 && (
-            <div className="py-8 text-center text-[13px] text-ink-secondary">No apps match.</div>
-          )}
+                    <ServiceIcon card={card} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 text-[14px] font-medium text-ink">
+                        {card.label}
+                        {connected && <span className="size-1.5 rounded-full bg-success" />}
+                      </div>
+                      <div className="truncate text-[12px] text-ink-secondary">{card.blurb}</div>
+                    </div>
+                    <button
+                      disabled={configured !== true || busy}
+                      onClick={() => (connected ? disconnect(card.slug) : connect(card.slug))}
+                      className={cn(
+                        "w-[92px] rounded-lg py-1.5 text-[13px] disabled:opacity-50",
+                        connected
+                          ? "bg-raised text-ink-secondary hover:text-danger"
+                          : "bg-raised text-ink hover:bg-raised-hover",
+                      )}
+                    >
+                      {busy ? (
+                        <Loader2 size={13} className="mx-auto animate-spin" />
+                      ) : connected ? (
+                        "Disconnect"
+                      ) : (
+                        "Connect"
+                      )}
+                    </button>
+                  </div>
+                );
+              })
+            )}
+            {cards !== null && visible.length === 0 && (
+              <div className="py-8 text-center text-[13px] text-ink-secondary">No apps match.</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
