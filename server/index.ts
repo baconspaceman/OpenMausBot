@@ -10,6 +10,16 @@ import * as box from "./box.ts";
 import * as composio from "./composio.ts";
 import { discoverLocalMcp } from "./local-mcp.ts";
 import {
+  completeDiscordOAuth,
+  discordAccountStatus,
+  listDiscordChannels,
+  listDiscordGuilds,
+  listDiscordMessages,
+  searchDiscordGuild,
+  sendDiscordMessage,
+  startDiscordOAuth,
+} from "./discord-account.ts";
+import {
   backendConfig,
   backendConfigStatus,
   backendLabel,
@@ -317,7 +327,11 @@ async function startTurn(botId: string, text: string) {
       if (cfg.composio?.key) integrations.composio = { key: cfg.composio.key, url: cfg.composio.url };
       const localMcp = await discoverLocalMcp(cfg);
       if (localMcp.length) integrations.localMcp = localMcp;
-      integrations.fileBus = { url: `http://127.0.0.1:${PORT}`, botId: bot.id };
+      integrations.fileBus = {
+        url: `http://127.0.0.1:${PORT}`,
+        botId: bot.id,
+        discordAccountEnabled: discordAccountStatus(cfg, PORT).connected,
+      };
       const wants = bot.computer; // cloud/local/wsl/hyperv/qemu/oracle/off/undefined(auto)
       if (isShellBackend(wants)) {
         broadcast({ kind: "computer", botId: bot.id, state: `starting-${wants}` });
@@ -368,6 +382,9 @@ async function startTurn(botId: string, text: string) {
               ? "You can act on the user's computer through the computer tools — take a screenshot or read the desktop state first, prefer accessibility actions over raw coordinates, and act carefully."
               : "",
           "The OpenMausBot File Bus is available to every bot. Use file_transfer to move files between host, current backend, WSL2, Hyper-V, QEMU, Oracle SSH, and future adapters. Host paths are relative to the configured File Bus root; do not place credentials or tokens in transfer paths or command output.",
+          integrations.fileBus.discordAccountEnabled
+            ? "Discord Account Research is attached as read-only tools for this turn. It acts through the owner's official Discord OAuth2 connection and may list the owner's guilds, inspect readable channels/messages, and search readable guild content. Do not send messages, modify Discord, or treat membership as permission to read every channel."
+            : "Discord Account Research is not connected for this turn.",
           integrations.localMcp?.length
             ? `Local MCP plugins attached for this turn: ${integrations.localMcp.map((server) => server.name).join(", ")}. Use their tools when the user asks about those connected services.`
             : "No local MCP plugin is reachable for this turn.",
@@ -397,6 +414,7 @@ function configStatus() {
     xai: { configured: Boolean(cfg.xai?.key) },
     composio: { configured: Boolean(cfg.composio?.key), apiKeyConfigured: Boolean(cfg.composio?.apiKey) },
     box: { configured: Boolean(cfg.box?.token) },
+    discordAccount: discordAccountStatus(cfg, PORT),
     fileBus: fileBusStatus(cfg),
     computer: backendConfigStatus(cfg),
   };
@@ -601,6 +619,66 @@ const server = createServer(async (req, res) => {
       const status = configStatus();
       broadcast({ kind: "config", ...status });
       return json(res, 200, status);
+    }
+
+    // ── official Discord account research (OAuth2, local-only) ──
+    if (method === "GET" && path === "/api/discord-account/status") {
+      return json(res, 200, discordAccountStatus(cfg, PORT));
+    }
+    if (method === "POST" && path === "/api/discord-account/config") {
+      const body = await readBody(req);
+      const current = cfg.discordAccount ?? {};
+      const clientId = typeof body.clientId === "string" ? body.clientId.trim() : "";
+      const clientSecret = typeof body.clientSecret === "string" ? body.clientSecret.trim() : "";
+      const callback = typeof body.redirectUri === "string" ? body.redirectUri.trim() : "";
+      if (!clientId && !current.clientId) return json(res, 400, { error: "Discord Client ID is required" });
+      if (!clientSecret && !current.clientSecret) return json(res, 400, { error: "Discord Client Secret is required" });
+      const next = {
+        clientId: clientId || current.clientId,
+        clientSecret: clientSecret || current.clientSecret,
+        ...(callback ? { redirectUri: callback } : {}),
+      };
+      saveConfig({ discordAccount: next });
+      Object.assign(cfg, loadConfig());
+      return json(res, 200, discordAccountStatus(cfg, PORT));
+    }
+    if (method === "POST" && path === "/api/discord-account/oauth/start") {
+      return json(res, 200, startDiscordOAuth(cfg, PORT));
+    }
+    if (method === "GET" && path === "/api/discord-account/oauth/callback") {
+      const code = url.searchParams.get("code") ?? "";
+      const state = url.searchParams.get("state") ?? "";
+      const patch = await completeDiscordOAuth(cfg, code, state, PORT);
+      saveConfig(patch);
+      Object.assign(cfg, loadConfig());
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<!doctype html><title>Discord connected</title><p>Discord is connected to OpenMausBot. You can close this window.</p><script>window.close()</script>");
+      return;
+    }
+    if (method === "POST" && path === "/api/discord-account/disconnect") {
+      saveConfig({ discordAccount: { accessToken: undefined, refreshToken: undefined, expiresAt: undefined, scope: undefined, user: undefined } });
+      Object.assign(cfg, loadConfig());
+      return json(res, 200, discordAccountStatus(cfg, PORT));
+    }
+    if (method === "GET" && path === "/api/discord-account/guilds") {
+      return json(res, 200, { guilds: await listDiscordGuilds(cfg, (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
+    }
+    m = path.match(/^\/api\/discord-account\/guilds\/([^/]+)\/channels$/);
+    if (m && method === "GET") {
+      return json(res, 200, { channels: await listDiscordChannels(cfg, decodeURIComponent(m[1]), (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
+    }
+    m = path.match(/^\/api\/discord-account\/channels\/([^/]+)\/messages$/);
+    if (m && method === "GET") {
+      return json(res, 200, { messages: await listDiscordMessages(cfg, decodeURIComponent(m[1]), url.searchParams, (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
+    }
+    m = path.match(/^\/api\/discord-account\/guilds\/([^/]+)\/search$/);
+    if (m && method === "GET") {
+      return json(res, 200, { messages: await searchDiscordGuild(cfg, decodeURIComponent(m[1]), url.searchParams, (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }) });
+    }
+    if (method === "POST" && path === "/api/discord-account/actions/send-message") {
+      const body = await readBody(req);
+      if (body.confirm !== "SEND") return json(res, 428, { error: "Sending Discord messages requires explicit confirmation: confirm must equal SEND." });
+      return json(res, 200, await sendDiscordMessage(cfg, String(body.channelId ?? ""), String(body.content ?? ""), (patch) => { saveConfig(patch); Object.assign(cfg, loadConfig()); }));
     }
 
     // ── provider-neutral File Bus ──

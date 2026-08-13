@@ -21,6 +21,7 @@ const shellBackend = isShellBackend(process.env.OGB_COMPUTER_BACKEND)
   : null;
 const fileBusUrl = (process.env.OGB_FILE_BUS_URL ?? "").replace(/\/$/, "");
 const fileBusBotId = process.env.OGB_FILE_BUS_BOT_ID ?? "";
+const discordAccountEnabled = process.env.OGB_DISCORD_ACCOUNT_ENABLED === "1";
 let shellConfig: Record<string, unknown> = {};
 try {
   shellConfig = JSON.parse(process.env.OGB_COMPUTER_CONFIG ?? "{}");
@@ -181,6 +182,46 @@ const FILE_TOOLS = [
   },
 ];
 
+const DISCORD_ACCOUNT_TOOLS = [
+  {
+    name: "discord_account_list_guilds",
+    description:
+      "Read the Discord servers/guilds available to the owner's connected Discord account. Read-only; this is not the bot-token connector.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "discord_account_list_channels",
+    description:
+      "List channels in one Discord guild through the owner's account. Only channels the account can access should be treated as readable.",
+    inputSchema: { type: "object", properties: { guild_id: { type: "string" } }, required: ["guild_id"] },
+  },
+  {
+    name: "discord_account_read_messages",
+    description:
+      "Read recent messages from a Discord channel through the owner's account. Use only for the user's stated research task; never infer access to private channels.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        channel_id: { type: "string" },
+        limit: { type: "number", description: "1-100, default 25" },
+        before: { type: "string" },
+        after: { type: "string" },
+      },
+      required: ["channel_id"],
+    },
+  },
+  {
+    name: "discord_account_search_guild",
+    description:
+      "Search readable messages in one Discord guild through the owner's account. Search is read-only and must be tied to the user's research question.",
+    inputSchema: {
+      type: "object",
+      properties: { guild_id: { type: "string" }, content: { type: "string" }, limit: { type: "number" } },
+      required: ["guild_id", "content"],
+    },
+  },
+];
+
 async function fileBusRequest(path: string, init?: RequestInit) {
   if (!fileBusUrl) throw new Error("OpenMausBot File Bus is not attached to this turn");
   const res = await fetch(`${fileBusUrl}${path}`, {
@@ -193,7 +234,56 @@ async function fileBusRequest(path: string, init?: RequestInit) {
   return body;
 }
 
+async function accountRequest(path: string) {
+  if (!fileBusUrl || !discordAccountEnabled) throw new Error("Discord Account Research is not connected in OpenMausBot");
+  const res = await fetch(`${fileBusUrl}${path}`, { signal: AbortSignal.timeout(30_000) });
+  const body: any = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(body?.error || `Discord Account Research request failed (${res.status})`);
+  return body;
+}
+
 async function call(id: unknown, name: string, args: any) {
+  if (name === "discord_account_list_guilds") {
+    try {
+      const body = await accountRequest("/api/discord-account/guilds");
+      return text(id, JSON.stringify(body, null, 2));
+    } catch (error) {
+      return text(id, `Discord Account Research failed: ${(error as Error).message}`, true);
+    }
+  }
+  if (name === "discord_account_list_channels") {
+    try {
+      const guildId = encodeURIComponent(String(args.guild_id ?? ""));
+      const body = await accountRequest(`/api/discord-account/guilds/${guildId}/channels`);
+      return text(id, JSON.stringify(body, null, 2));
+    } catch (error) {
+      return text(id, `Discord Account Research failed: ${(error as Error).message}`, true);
+    }
+  }
+  if (name === "discord_account_read_messages") {
+    try {
+      const query = new URLSearchParams();
+      for (const key of ["limit", "before", "after"]) {
+        if (args[key] !== undefined && args[key] !== null && String(args[key]).trim()) query.set(key, String(args[key]));
+      }
+      const channelId = encodeURIComponent(String(args.channel_id ?? ""));
+      const body = await accountRequest(`/api/discord-account/channels/${channelId}/messages?${query.toString()}`);
+      return text(id, JSON.stringify(body, null, 2));
+    } catch (error) {
+      return text(id, `Discord Account Research failed: ${(error as Error).message}`, true);
+    }
+  }
+  if (name === "discord_account_search_guild") {
+    try {
+      const query = new URLSearchParams({ content: String(args.content ?? "") });
+      if (args.limit !== undefined) query.set("limit", String(args.limit));
+      const guildId = encodeURIComponent(String(args.guild_id ?? ""));
+      const body = await accountRequest(`/api/discord-account/guilds/${guildId}/search?${query.toString()}`);
+      return text(id, JSON.stringify(body, null, 2));
+    } catch (error) {
+      return text(id, `Discord Account Research failed: ${(error as Error).message}`, true);
+    }
+  }
   if (name === "file_transfer") {
     try {
       const body = await fileBusRequest("/api/file-bus/transfer", {
@@ -325,7 +415,9 @@ async function handle(msg: any) {
   }
   if (msg.method === "tools/list") {
     const computerTools = shellBackend ? TOOLS.filter((tool) => tool.name === "computer_exec") : TOOLS;
-    const tools = fileBusUrl ? [...computerTools, ...FILE_TOOLS] : computerTools;
+    const tools = fileBusUrl
+      ? [...computerTools, ...FILE_TOOLS, ...(discordAccountEnabled ? DISCORD_ACCOUNT_TOOLS : [])]
+      : computerTools;
     return send({ jsonrpc: "2.0", id: msg.id, result: { tools } });
   }
   if (msg.method === "tools/call") {

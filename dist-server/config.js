@@ -68,7 +68,7 @@ export function saveConfig(patch) {
     catch {
         /* first write */
     }
-    for (const key of ["xai", "composio", "box", "computer", "fileBus", "localMcp"]) {
+    for (const key of ["xai", "composio", "box", "computer", "fileBus", "discordAccount", "localMcp"]) {
         if (patch[key] && typeof patch[key] === "object") {
             disk[key] = { ...disk[key], ...patch[key] };
         }

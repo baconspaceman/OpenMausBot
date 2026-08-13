@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Info, Loader2, RefreshCw, X } from "lucide-react";
 import { api, useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
+import { DiscordAccountPanel } from "./DiscordAccountPanel";
 
 interface ToolkitCard {
   slug: string;
@@ -179,6 +180,10 @@ export function PluginsPanel() {
           <div>
             <span className="font-medium text-ink">Two extension routes:</span> this list is for Composio connected apps. Local MCP plugins—such as a locally running Discord bridge—are separate and are not discovered here yet.
           </div>
+        </div>
+
+        <div className="mt-3">
+          <DiscordAccountPanel />
         </div>
 
         {configured === false && (

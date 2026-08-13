@@ -20,6 +20,18 @@ export interface AppConfig {
   computer?: ComputerBackendSettings;
   /** Host staging root for the provider-neutral File Bus. */
   fileBus?: { root?: string };
+  /** Official Discord OAuth2 account connection. Tokens stay local and are
+   * never passed into provider prompts or MCP process environments. */
+  discordAccount?: {
+    clientId?: string;
+    clientSecret?: string;
+    redirectUri?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    scope?: string;
+    user?: { id: string; username?: string; globalName?: string };
+  };
   /** Optional local MCP endpoints. The Discord bridge has a safe localhost default. */
   localMcp?: {
     servers?: Record<string, { url?: string; enabled?: boolean; headers?: Record<string, string> }>;
@@ -92,7 +104,7 @@ export function saveConfig(patch: Partial<AppConfig>): void {
   } catch {
     /* first write */
   }
-  for (const key of ["xai", "composio", "box", "computer", "fileBus", "localMcp"] as const) {
+  for (const key of ["xai", "composio", "box", "computer", "fileBus", "discordAccount", "localMcp"] as const) {
     if (patch[key] && typeof patch[key] === "object") {
       disk[key] = { ...(disk[key] as object), ...patch[key] };
     }

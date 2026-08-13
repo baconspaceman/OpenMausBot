@@ -88,6 +88,7 @@ function acpMcpServers(turn) {
                 { name: "ELECTRON_RUN_AS_NODE", value: "1" },
                 { name: "OGB_FILE_BUS_URL", value: fileBus.url },
                 { name: "OGB_FILE_BUS_BOT_ID", value: fileBus.botId },
+                { name: "OGB_DISCORD_ACCOUNT_ENABLED", value: fileBus.discordAccountEnabled ? "1" : "0" },
             ],
         });
     }

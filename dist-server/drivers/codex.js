@@ -76,7 +76,13 @@ function computerMcpConfig(turn) {
                 ? { OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
                 : { OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) }
             : {}),
-        ...(fileBus ? { OGB_FILE_BUS_URL: fileBus.url, OGB_FILE_BUS_BOT_ID: fileBus.botId } : {}),
+        ...(fileBus
+            ? {
+                OGB_FILE_BUS_URL: fileBus.url,
+                OGB_FILE_BUS_BOT_ID: fileBus.botId,
+                OGB_DISCORD_ACCOUNT_ENABLED: fileBus.discordAccountEnabled ? "1" : "0",
+            }
+            : {}),
     };
     mcp_servers[computer ? "computer" : "file_bus"] = { command: process.execPath, args: [COMPUTER_PROXY_PATH], env };
     return { mcp_servers };

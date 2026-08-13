@@ -237,7 +237,11 @@ export const ClaudeDriver = {
                             ? { OGB_BOX_ID: computer.boxId, OGB_BOX_TOKEN: computer.token }
                             : { OGB_COMPUTER_BACKEND: computer.backend, OGB_COMPUTER_CONFIG: JSON.stringify(computer.config) }),
                         ...(turn.integrations.fileBus
-                            ? { OGB_FILE_BUS_URL: turn.integrations.fileBus.url, OGB_FILE_BUS_BOT_ID: turn.integrations.fileBus.botId }
+                            ? {
+                                OGB_FILE_BUS_URL: turn.integrations.fileBus.url,
+                                OGB_FILE_BUS_BOT_ID: turn.integrations.fileBus.botId,
+                                OGB_DISCORD_ACCOUNT_ENABLED: turn.integrations.fileBus.discordAccountEnabled ? "1" : "0",
+                            }
                             : {}),
                     },
                 };
@@ -258,6 +262,7 @@ export const ClaudeDriver = {
                         ...NODE_ENV_FLAG,
                         OGB_FILE_BUS_URL: turn.integrations.fileBus.url,
                         OGB_FILE_BUS_BOT_ID: turn.integrations.fileBus.botId,
+                        OGB_DISCORD_ACCOUNT_ENABLED: turn.integrations.fileBus.discordAccountEnabled ? "1" : "0",
                     },
                 };
                 allowed.push("mcp__file_bus");

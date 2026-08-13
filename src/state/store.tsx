@@ -68,6 +68,15 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   composio: { configured: boolean; apiKeyConfigured?: boolean };
   box: { configured: boolean };
+  discordAccount?: {
+    configured: boolean;
+    connected: boolean;
+    clientIdConfigured: boolean;
+    redirectUri: string;
+    scopes: string[];
+    expiresAt: number | null;
+    user: { id: string; username?: string; globalName?: string } | null;
+  };
   fileBus?: { configured: boolean; root: string; exists: boolean };
   computer?: {
     wsl: { configured: boolean; distro?: string };
